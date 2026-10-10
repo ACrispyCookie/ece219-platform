@@ -52,6 +52,18 @@ test('duplicate detail asks for selection and never displays another version fin
 test('historical evidence is separate and preserves raw zero scores, theory and notes',async()=>{
  const h=harness(fetchFor(),'?lab=Lab1&team=001_002&version=two');await h.app.start();assert.match(h.root.innerHTML,/Ιστορικά τεκμήρια/);assert.match(h.root.innerHTML,/legacy CSV/);assert.match(h.root.innerHTML,/Wrong boundaries/);assert.match(h.root.innerHTML,/Missing exit/);assert.match(h.root.innerHTML,/Explain stack/);assert.match(h.root.innerHTML,/>0</);assert.match(h.root.innerHTML,/>8</);
 });
+test('reviewer execution metadata is not mislabeled as historical grading evidence',async()=>{
+ const lab=fixture();lab.teams[0].versions[0].evidence={status:'failed',argv:['synthetic reviewer'],stderr:'<script>untrusted error</script>',error:'invalid citation'};
+ const h=harness(fetchFor(lab),'?lab=Lab1&team=001_002&version=one');await h.app.start();
+ assert.match(h.root.innerHTML,/Στοιχεία εκτέλεσης reviewer/);assert.doesNotMatch(h.root.innerHTML,/Ιστορικά τεκμήρια|Αρχικές τιμές και σημειώσεις/);
+ assert.match(h.root.innerHTML,/invalid citation/);assert.doesNotMatch(h.root.innerHTML,/<script>untrusted/);
+});
+test('reviewer metadata and original historical records remain separate visible sections',async()=>{
+ const lab=fixture();lab.teams[0].versions[1].evidence.run={status:'succeeded',argv:['synthetic reviewer'],inputHash:'synthetic-hash'};
+ const h=harness(fetchFor(lab),'?lab=Lab1&team=001_002&version=two');await h.app.start();
+ assert.match(h.root.innerHTML,/Ιστορικά τεκμήρια/);assert.match(h.root.innerHTML,/Στοιχεία εκτέλεσης reviewer/);
+ assert.match(h.root.innerHTML,/Wrong boundaries/);assert.match(h.root.innerHTML,/synthetic-hash/);
+});
 test('API connection error clears loaded data instead of showing stale defaults',async()=>{
  let offline=false;const h=harness(async url=>{if(offline)throw Error('offline');return fetchFor()(url);});await h.app.start();offline=true;await h.app.navigate({lab:'Lab2',team:'',version:''});assert.match(h.root.innerHTML,/offline/);assert.doesNotMatch(h.root.innerHTML,/first.zip|Needs boundary checks/);
 });
