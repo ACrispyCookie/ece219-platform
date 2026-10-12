@@ -1,17 +1,33 @@
-PYTHON ?= python3
+PYTHON ?= .venv/bin/python
+NPM ?= npm
 HOST ?= 127.0.0.1
 PORT ?= 3458
-WORKSPACE ?= workspace
+DATA_DIR ?= workspace/catalog
 
-.PHONY: test serve help
+.PHONY: help test test-backend test-frontend check build serve
 help:
-	@printf '%s\n' 'make test                 Run backend, frontend, legacy and tool tests' 'make serve                Serve the multi-lab workspace on localhost' 'make test PYTHON=.venv/bin/python  Include optional PDF tests' 'Use python -m ece218 --help for import and review commands.'
+	@printf '%s\n' \
+	  'make test                 Run API/domain/security and frontend tests' \
+	  'make check                Run tests and TypeScript checks' \
+	  'make build                Build the unified frontend' \
+	  'make serve                Serve the authenticated catalog on localhost' \
+	  'make serve HOST=192.168.1.5 PORT=3458  Serve on a trusted LAN interface' \
+	  'make serve DATA_DIR=workspace/another-catalog  Use a separate catalog' \
+	  'See README.md for installation and operator access.'
 
-test:
-	$(PYTHON) -m unittest discover -s tests -v
-	$(PYTHON) -m unittest discover -s summary -p 'test_*.py' -v
-	$(PYTHON) -m unittest discover -s tools -p 'test_*.py' -v
-	node --test web/frontend.test.cjs summary/frontend.test.cjs
+test: test-backend test-frontend
+
+test-backend:
+	PYTHONPATH=backend $(PYTHON) -m pytest backend/tests -q
+
+test-frontend:
+	$(NPM) --prefix frontend test
+
+check: test
+	$(NPM) --prefix frontend run typecheck
+
+build:
+	$(NPM) --prefix frontend run build
 
 serve:
-	$(PYTHON) -m ece218 --workspace $(WORKSPACE) serve --host $(HOST) --port $(PORT)
+	PYTHONPATH=backend $(PYTHON) -m lab_catalog serve --data-dir $(DATA_DIR) --host $(HOST) --port $(PORT) --allowed-host $(HOST):$(PORT) --frontend-dir frontend/dist

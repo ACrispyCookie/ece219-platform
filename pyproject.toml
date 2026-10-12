@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lab-catalog"
+version = "0.1.0"
+description = "API-first catalog of teaching labs, teams, submissions and assessments"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.143.0",
+  "uvicorn==0.54.0",
+  "python-multipart==0.0.32",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "httpx==0.28.1"]
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+include = ["lab_catalog*"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend"]
+addopts = "-ra"

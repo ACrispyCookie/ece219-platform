@@ -1,154 +1,115 @@
-# ECE218 Lab Review Platform
+# Lab Catalog
 
-A private teaching-assistant workspace for importing lab submissions, reviewing each exercise with an agent, and recording human grading decisions. The dashboard is in Greek. Every archive version remains visible; it never silently chooses the newest or best submission.
+A private, API-first platform for organizing teaching labs, teams, submissions and exercise assessments. One Greek web interface provides lab setup, a team-by-exercise overview, grading, notes and evidence. Labs and rubrics are configured through the application rather than through lab-specific scripts.
 
-## Review workflow
+## What it stores
 
-```text
-Lab manifest + original archives + handout/guidelines/solutions
-                         ↓
-              Safe import into private workspace
-                         ↓
-    Optional isolated tests → source-linked execution evidence
-                         ↓
-          Prepared bundle → tool-less agent → validated draft
-                         ↓
-       Team/exercise dashboard → separate human notes and grade
-```
+- **Labs and materials:** handouts, graders, solutions, grading guidelines and other attachments, optionally associated with an exercise.
+- **Exercises and grading rules:** maximum points, instructions, manual scoring or a criterion-based rubric. The lab's point total is derived from its active exercises.
+- **Teams:** literal student identifiers, optional names, incomplete memberships and team notes.
+- **Submission versions:** original ZIP bytes, hashes, explicit team associations and bounded member inventories. Uploading the same bytes again creates a separate version.
+- **Exercise assessments:** scores, draft/final status, an optional explicit submission association, notes and immutable revision history.
+- **Evidence:** text, links, attached files and structured result data, independent of whether a score has been assigned.
 
-The platform keeps three distinct kinds of information:
+Uploaded graders and student code are **stored, never executed**. Evidence does not automatically become a mark. Changing a rubric retains previous scores and flags them for review.
 
-- **Historical evidence:** previously recorded results, imported by exact archive filename and labeled with their original suite.
-- **Current execution evidence:** immutable runner artifacts linked to exact source bytes, including failed inputs, expected values, returned values and errors.
-- **Agent reviews and human decisions:** cited draft findings and oral questions; the instructor's notes, approval and grade are stored separately.
+## Requirements
 
-Exercise weights alone do not define a numerical grading policy. Without an explicit machine-readable rubric, agent reports are qualitative. Functional tests do not establish ABI compliance, console behaviour or oral understanding.
+- Python 3.11 or newer and [uv](https://docs.astral.sh/uv/), or an equivalent Python environment manager.
+- Node.js 22.12 or newer and npm for building and developing the frontend.
+- A local filesystem for SQLite and private file storage.
 
-## Requirements and setup
+The application does not require Docker, Java, an LLM provider or Hermes.
 
-- Python 3.11+ for the application and Lab1 runner; Node.js for frontend tests.
-- Optional `pypdf` for PDF extraction. Without it the application can use installed `pdftotext`.
-- RAR intake needs a full `7zz`/`7z` installation with RAR decoding support. Some distribution builds can list RAR files but cannot decode them.
-- Lab1 execution requires Docker and the pinned RARS/image described in [the Lab1 runner guide](docs/lab1-runner.md).
-- Agent review requires an installed, configured Hermes runtime or another explicitly selected JSON reviewer.
+## Setup and run
+
+From the repository root:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-make test PYTHON=.venv/bin/python
+uv sync --locked --extra dev
+npm --prefix frontend ci
+make build
+make serve
 ```
 
-The backend and browser UI need no build step or JavaScript dependencies.
+Open `http://127.0.0.1:3458/`. The server initializes an empty catalog under `workspace/catalog/`. It generates an operator access token in `workspace/catalog/operator-token`; copy its contents into the application's login form using a local password manager or trusted local interface. Do not put the token in URLs, source files or shared chat.
 
-## Add a lab
-
-Create a local `Lab2/` directory containing submissions and trusted teaching materials. Write `Lab2/lab.json`; paths are relative to that manifest. This is an example configuration, not an existing course handout:
-
-```json
-{
-  "id": "Lab2",
-  "title": "Lab 2",
-  "exercises": [
-    {"id": "exercise1", "title": "Exercise 1"}
-  ],
-  "materials": [
-    {"role": "handout", "path": "handout.pdf"},
-    {"role": "guidelines", "path": "guidelines.txt"},
-    {"role": "grader", "path": "grader.py"}
-  ],
-  "submissions": "submissions",
-  "teams": {
-    "team-example.zip": ["0012", "0034"]
-  }
-}
-```
-
-Material roles are `handout`, `guidelines`, `grader`, `testcases` and `solution`. The importer retains these files; **it does not execute an uploaded grader**. Only trusted, separately invoked runners may execute a grader.
-
-An exact `teams` mapping overrides filename-derived identifiers. Leading zeros are preserved. Member order does not split a team: key generation uses unordered membership while each archive record preserves the original identifiers and order. Name-only submissions remain unresolved until mapped; duplicate archives remain separate versions even when their contents are identical.
+The default listener is loopback. To bind to a trusted LAN interface, supply the machine's actual address:
 
 ```bash
-.venv/bin/python -m ece218 import Lab2/lab.json
-.venv/bin/python -m ece218 prepare Lab2
-.venv/bin/python -m ece218 list
+make serve HOST=192.168.1.5 PORT=3458
 ```
 
-Re-import is additive and idempotent for unchanged archives. Changed archive bytes become a distinct version. Corrupt/unsafe archives remain blocked with their error and preserved original; they are not silently repaired.
+Host and browser Origin checks require the exact advertised address and port. Authentication is still required on the LAN. Use a VPN or an HTTPS deployment when traffic crosses an untrusted network; the CLI does not terminate TLS or trust forwarded proxy headers.
 
-## Run agent review
+## Using the application
 
-Use a **trusted** reviewer command. It receives one prepared JSON bundle on stdin and must emit one report JSON on stdout. Commands are split into arguments and executed without a shell. The dashboard cannot launch a reviewer or student code.
+1. Create a lab and upload its teaching materials.
+2. Add exercises, assign maximum points and define their grading instructions. Criterion-based rubrics must sum exactly to the exercise maximum.
+3. Create teams and enter known members. Keep incomplete memberships explicitly incomplete.
+4. Upload the team's ZIP submissions. Choose a particular version explicitly when inspecting or associating a grade with it.
+5. Open an exercise tab for the team. Save a draft or final assessment, notes and evidence. A blank grade is not a zero.
+6. Use the overview to inspect completion and outstanding work, or export the lab's metadata and assessment history as JSON.
 
-For the included Hermes adapter, set the paths to your installed Hermes source and its Python runtime; these are process options, not application configuration:
+Assessment and configuration changes require the current revision. Conflicts preserve the editor's draft rather than overwriting another client's changes.
 
-```bash
-export HERMES_REVIEWER_ROOT="$HOME/.hermes/hermes-agent"
-export HERMES_REVIEWER_PYTHON="$(hermes --print-runtime-command | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')"
+## API and agent clients
 
-.venv/bin/python -m ece218 review-run Lab2 \
-  --command '.venv/bin/python tools/hermes_reviewer.py --timeout 300' \
-  --timeout 330
-```
+- Versioned REST API: `/api/v1`
+- Interactive schema: `/docs`
+- Machine-readable OpenAPI: `/openapi.json`
+- Minimal public liveness endpoint: `/health`
 
-Use Hermes' prepared interpreter if your installation does not bootstrap dependencies with the selected Python. The adapter resolves configured model/provider credentials through Hermes; it does not change profiles or settings. `--model` and `--provider` select per-invocation overrides. `--context-file` supplies trusted operator notes, never student instructions.
+Agent clients authenticate with `Authorization: Bearer` using the operator token. The web interface uses an expiring HttpOnly session cookie; it does not persist the token in browser local storage. This is a **single-operator** application, not a multi-user permissions system.
 
-The adapter has no advertised tools and refuses tool calls, malformed reports and invalid citations. Reviews may send source content to the configured model provider: use only a provider approved for student data. Tool isolation is not an OS sandbox for the trusted Hermes installation. Failed/time-limited calls are recorded as failures, not fabricated feedback.
-
-To review one explicit archive version, add `--version VERSION_ID`. External reports can also be checked with:
-
-```bash
-.venv/bin/python -m ece218 review-import Lab2 workspace/review.json
-```
-
-See [the data contract](docs/data-contract.md) for report shape, citations and evidence imports.
-
-## Open the dashboard
-
-```bash
-make serve PYTHON=.venv/bin/python
-# http://127.0.0.1:3458/
-```
-
-Select a lab, search by student identifier/archive, and open an explicit version to see exercise findings, source citations, documents and failures. Preparing a bundle does not run an agent. Human-note saves require a matching server readback.
-
-For an explicitly trusted LAN, use your machine's actual address:
-
-```bash
-.venv/bin/python -m ece218 serve \
-  --host 192.0.2.10 --hostLAN 192.0.2.10 --port 3458
-```
-
-`192.0.2.10` is a documentation example; replace it. The server has **no authentication**. Anyone able to reach an allowed LAN address can read student records and modify human notes. Keep it on localhost or a trusted VPN/LAN with appropriate access controls; do not expose it publicly. Host/Origin checks are not authentication.
-
-## Export and historical import
-
-```bash
-.venv/bin/python -m ece218 report Lab2 --json workspace/lab2-report.json
-.venv/bin/python -m ece218 evidence-import Lab1 workspace/historical-report.json \
-  --source 'Historical lab report; original suite'
-```
-
-Historical imports use exact filenames. If one filename has multiple hash versions, provide `--versions mapping.json` with exact archive-name → version-ID pairs. Import never turns historical evidence into a fresh run or an approved grade.
+See [API workflows](docs/api.md) for resource relationships, decimal values, revisions and uploads. A future MCP adapter can use this API without duplicating storage or grading logic; an MCP server is not included.
 
 ## Repository layout
 
-- `ece218/`: private inventory, safe archive intake, evidence linkage, review validation, CLI and HTTP API.
-- `web/`: dependency-free dashboard and frontend tests.
-- `tools/`: isolated Lab1 runner and tool-less Hermes reviewer.
-- `tests/`: synthetic backend/CLI/HTTP regressions.
-- `summary/`: compatible, read-only historical Lab1 dashboard; see its README.
-- `docs/`: data contract and Lab1 runner instructions.
-- `Lab*/`, `workspace/`, `.submission-cache/`: local teaching inputs and generated private records, excluded from Git.
+```text
+backend/lab_catalog/  HTTP API, schemas, application service, SQLite and files
+backend/tests/        Synthetic API, storage, security and persistence tests
+frontend/src/         Unified React/TypeScript web application and component tests
+frontend/dist/        Built frontend served by the Python application
+pyproject.toml        Python dependencies and package configuration
+uv.lock               Resolved Python dependency lock
+Makefile              Build, check and run commands
+docs/                 Architecture, API workflows and operations
+workspace/catalog/    Private runtime state; not application source
+```
 
-Back up original lab directories, source CSVs and the private workspace separately. The code repository is not a student-data backup. Do not force-add ignored submissions, grades or credentials.
+See [architecture](docs/architecture.md) for ownership boundaries and [operations](docs/operations.md) for storage, backups and failure handling.
 
-## Troubleshooting
+## Frontend development
 
-- **Submission file absent:** inspect the archive's blocked status and original-member inventory. Moved historical paths are resolved by the legacy dashboard's verified extraction cache.
-- **RAR “Unsupported Method”:** install a full decoder; archive listing alone is not proof of successful extraction.
-- **CRC failure:** obtain a corrected submission as a new version. Preserve the corrupt original.
-- **Unresolved team:** add an exact manifest mapping and re-import; do not guess from a student's display name.
-- **Scanned PDF:** text extraction reports `OCR required`. The platform does not pretend to read image-only pages; review them manually or use a separately verified OCR workflow.
-- **Stale bundle/review:** inputs or attached evidence changed. Prepare again and rerun review.
-- **Adapter error:** no completed functional score exists. Inline assembly is not automatically a callable function.
-- **HTTP 403:** the requested Host or mutation Origin does not match the advertised address. Use the exact dashboard URL.
+Run an isolated API on its development port:
+
+```bash
+.venv/bin/python -m lab_catalog serve \
+  --data-dir workspace/catalog-development \
+  --host 127.0.0.1 --port 3460 \
+  --allowed-host 127.0.0.1:3460
+```
+
+In another terminal:
+
+```bash
+npm --prefix frontend run dev
+```
+
+Open `http://127.0.0.1:5173/` and use the token from the development data directory. Vite binds to loopback, uses a strict port, and proxies API/docs/schema requests to `127.0.0.1:3460`. The proxy translates only the exact legitimate development Origin; it does not bypass authentication or accept hostile Origins. For the production same-origin layout, use `make build` and `make serve` instead.
+
+## Verification
+
+```bash
+make check
+make build
+```
+
+`make check` runs backend and frontend tests plus TypeScript checks. Tests use synthetic fixtures; production starts without demonstration records.
+
+For a separate catalog, change the data directory rather than replacing the database in an active server:
+
+```bash
+make serve DATA_DIR=workspace/another-catalog PORT=3459
+```

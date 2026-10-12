@@ -3,10 +3,6 @@
 /workspace/
 /.submission-cache/
 /*.csv
-/summary/data.js
-/summary/report-data.json
-/summary/output.log
-/summary/VERIFICATION.md
 __pycache__/
 *.py[cod]
 .venv/
@@ -17,4 +13,14 @@ node_modules/
 .pytest_cache/
 /build/
 /dist/
+/frontend/dist/
+/frontend/coverage/
 *.egg-info/
+.uv/
+.coverage
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+operator-token

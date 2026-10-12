@@ -1,2 +1,0 @@
-# Optional PDF text extraction; core inventory/server use the standard library.
-pypdf==6.20.0
