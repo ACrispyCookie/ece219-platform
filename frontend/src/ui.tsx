@@ -11,6 +11,7 @@ import { api, APIError } from './api';
 import type { Page } from './types';
 import { sameRecord, unconfirmed } from './verification';
 import { stringifyJSON } from './resultJSON';
+import { useOperations } from './OperationContext';
 export const DirtyContext = createContext<{
   set: (key: string, dirty: boolean) => void;
   guard: () => boolean;
@@ -69,6 +70,8 @@ export function usePaged<T>(path: string | null) {
     epoch.current++;
     setExtra([]);
     setError(undefined);
+    // The old epoch no longer owns an in-flight More or its busy indicator.
+    setBusy(false);
   }, [path, resource.value]);
   const items = [...(resource.value?.items || []), ...extra];
   async function more() {
@@ -181,6 +184,8 @@ export function SaveForm<T extends object>({
   const [error, setError] = useState<Error>();
   const [server, setServer] = useState<T>();
   const [success, setSuccess] = useState(false);
+  const operations = useOperations();
+  const saveOwner = useRef(Symbol('save'));
   const dirty = !sameRecord(draft, baseline);
   useDirty(dirty || busy);
   const mounted = useRef(true);
@@ -191,21 +196,21 @@ export function SaveForm<T extends object>({
     };
   }, []);
   const patch = (p: Partial<T>) => {
-    if (busy) return;
+    if (operations.locked.current || operations.saves.current.has(saveOwner.current)) return;
     setDraft((d) => ({ ...d, ...p }));
     setSuccess(false);
   };
   async function submit() {
-    if (busy) return;
+    if (!operations.acquireSave(saveOwner.current)) return;
     setError(undefined);
     setSuccess(false);
-    const invalid = validate?.(draft);
-    if (invalid) {
-      setError(new Error(invalid));
-      return;
-    }
-    setBusy(true);
     try {
+      const invalid = validate?.(draft);
+      if (invalid) {
+        setError(new Error(invalid));
+        return;
+      }
+      setBusy(true);
       const written = await save(draft);
       const saved = await read();
       if (!sameRecord(written, saved)) throw new Error(unconfirmed);
@@ -231,9 +236,10 @@ export function SaveForm<T extends object>({
       setSuccess(true);
       onSaved(saved);
     } catch (e) {
-      setError(e as Error);
+      if (mounted.current) setError(e as Error);
     } finally {
-      setBusy(false);
+      operations.releaseSave(saveOwner.current);
+      if (mounted.current) setBusy(false);
     }
   }
   return (

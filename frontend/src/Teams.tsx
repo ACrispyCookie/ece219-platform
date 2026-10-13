@@ -2,6 +2,8 @@ import { useContext, useRef, useState } from 'react';
 import { api, id, json, labPath } from './api';
 import { DirtyContext, Empty, Field, LoadState, More, SaveForm, usePaged } from './ui';
 import type { Team } from './types';
+import Removal from './Removal';
+import { OperationContext, useOperations } from './OperationContext';
 export function TeamEditor({
   labId,
   team,
@@ -98,6 +100,7 @@ export function TeamEditor({
               </div>
               <button
                 type="button"
+                className="compact-delete editor-remove"
                 onClick={() => set({ members: d.members.filter((_, i) => i !== index) })}
               >
                 Αφαίρεση μέλους {index + 1}
@@ -137,6 +140,7 @@ export function TeamEditor({
   );
 }
 export default function Teams({ labId, onTeam }: { labId: string; onTeam: (id: string) => void }) {
+  const removal = useOperations();
   const list = usePaged<Team>(`${labPath(labId)}/teams`);
   const [create, setCreate] = useState(false);
   const [search, setSearch] = useState('');
@@ -147,79 +151,97 @@ export default function Teams({ labId, onTeam }: { labId: string; onTeam: (id: s
       t.members.some((m) => m.student_id.includes(search)),
   );
   return (
-    <>
-      <div className="section-heading">
-        <div>
-          <h2>Ομάδες</h2>
-          <p className="muted">Μέλη, παραδόσεις και τεκμηριωμένη αξιολόγηση.</p>
-        </div>
-        <button
-          className="primary"
-          onClick={() => {
-            if (context.guard()) setCreate(true);
-          }}
-        >
-          Νέα ομάδα
-        </button>
-      </div>
-      {create && (
-        <TeamEditor
-          labId={labId}
-          onSaved={() => list.reload()}
-          onCancel={() => {
-            if (context.guard()) setCreate(false);
-          }}
-        />
-      )}
-      <Field label="Αναζήτηση ομάδων">
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Ετικέτα ή ΑΜ"
-        />
-      </Field>
-      <LoadState {...list} retry={list.reload}>
-        {!visible.length ? (
-          <Empty>Δεν βρέθηκαν ομάδες στα φορτωμένα αποτελέσματα.</Empty>
-        ) : (
-          <div className="cards">
-            {visible.map((t) => (
-              <article className="resource-card" key={t.id}>
-                <h3>
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      if (context.guard()) onTeam(t.id);
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                </h3>
-                <div className="members">
-                  {t.members.map((m) => (
-                    <div key={m.student_id}>
-                      <span className="student-id">{m.student_id}</span>{' '}
-                      <span className="muted">{m.name}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="actions">
-                  <span className={`badge ${t.membership_complete ? 'good' : 'warn'}`}>
-                    {t.membership_complete ? 'Πλήρη μέλη' : 'Ελλιπή μέλη'}
-                  </span>
-                  {t.archived && <span className="badge warn">Αρχειοθετημένη</span>}
-                </div>
-              </article>
-            ))}
+    <OperationContext.Provider value={removal}>
+      <fieldset disabled={removal.pending} className="form-fields">
+        <div className="section-heading">
+          <div>
+            <h2>Ομάδες</h2>
+            <p className="muted">Μέλη, παραδόσεις και τεκμηριωμένη αξιολόγηση.</p>
           </div>
+          <button
+            className="primary"
+            onClick={() => {
+              if (!removal.locked.current && context.guard()) setCreate(true);
+            }}
+          >
+            Νέα ομάδα
+          </button>
+        </div>
+        {create && (
+          <TeamEditor
+            labId={labId}
+            onSaved={() => list.reload()}
+            onCancel={() => {
+              if (!removal.locked.current && context.guard()) setCreate(false);
+            }}
+          />
         )}
-        {list.items.length < list.total && (
-          <p className="small muted">Η αναζήτηση αφορά τις φορτωμένες ομάδες.</p>
-        )}
-        <More count={list.items.length} total={list.total} busy={list.busy} onMore={list.more} />
-        {list.moreError && <p role="alert">{list.moreError.message}</p>}
-      </LoadState>
-    </>
+        <Field label="Αναζήτηση ομάδων">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Ετικέτα ή ΑΜ"
+          />
+        </Field>
+        <LoadState {...list} retry={list.reload}>
+          {!visible.length ? (
+            <Empty>Δεν βρέθηκαν ομάδες στα φορτωμένα αποτελέσματα.</Empty>
+          ) : (
+            <div className="cards">
+              {visible.map((t) => (
+                <article className="resource-card" key={t.id}>
+                  <h3>
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        if (!removal.locked.current && context.guard()) onTeam(t.id);
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  </h3>
+                  <div className="members">
+                    {t.members.map((m) => (
+                      <div key={m.student_id}>
+                        <span className="student-id">{m.student_id}</span>{' '}
+                        <span className="muted">{m.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="actions item-actions">
+                    <div className="item-status">
+                      <span className={`badge ${t.membership_complete ? 'good' : 'warn'}`}>
+                        {t.membership_complete ? 'Πλήρη μέλη' : 'Ελλιπή μέλη'}
+                      </span>
+                      {t.archived && <span className="badge warn">Αρχειοθετημένη</span>}
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!removal.locked.current && context.guard()) onTeam(t.id);
+                      }}
+                    >
+                      Προβολή ομάδας
+                    </button>
+                    <Removal
+                      path={`${labPath(labId)}/teams/${id(t.id)}`}
+                      revision={t.revision}
+                      title={t.label}
+                      kind="ομάδας"
+                      onRemoved={list.reload}
+                    />
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          {list.items.length < list.total && (
+            <p className="small muted">Η αναζήτηση αφορά τις φορτωμένες ομάδες.</p>
+          )}
+          <More count={list.items.length} total={list.total} busy={list.busy} onMore={list.more} />
+          {list.moreError && <p role="alert">{list.moreError.message}</p>}
+        </LoadState>
+      </fieldset>
+    </OperationContext.Provider>
   );
 }

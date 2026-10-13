@@ -3,6 +3,8 @@ import { api, json, labPath } from './api';
 import { DirtyContext, Empty, Field, LoadState, More, SaveForm, usePaged, useResource } from './ui';
 import type { Lab, Overview } from './types';
 import Exercises from './Exercises';
+import Removal from './Removal';
+import { OperationContext, useOperations } from './OperationContext';
 import Teams from './Teams';
 import TeamDetail from './TeamDetail';
 import Materials from './Materials';
@@ -286,6 +288,8 @@ function OverviewView({ labId, onTeam }: { labId: string; onTeam: (id: string) =
   );
 }
 export default function App() {
+  const removal = useOperations();
+  const [removedLabs, setRemovedLabs] = useState<Set<string>>(() => new Set());
   const session = useResource<{ authenticated: boolean }>('/session');
   const [authenticated, setAuthenticated] = useState(false);
   const [expired, setExpired] = useState(false);
@@ -319,10 +323,11 @@ export default function App() {
         else dirty.current.delete(key);
       },
       guard: () =>
-        !dirty.current.size ||
-        window.confirm('Υπάρχουν μη αποθηκευμένες αλλαγές. Θέλετε να τις απορρίψετε;'),
+        !removal.locked.current &&
+        (!dirty.current.size ||
+          window.confirm('Υπάρχουν μη αποθηκευμένες αλλαγές. Θέλετε να τις απορρίψετε;')),
     }),
-    [],
+    [removal.locked],
   );
   useEffect(() => {
     if (session.value?.authenticated) setAuthenticated(true);
@@ -330,7 +335,7 @@ export default function App() {
   useEffect(() => {
     const handler = () => setExpired(true);
     const before = (e: BeforeUnloadEvent) => {
-      if (dirty.current.size) {
+      if (dirty.current.size || removal.locked.current) {
         e.preventDefault();
         e.returnValue = '';
       }
@@ -341,7 +346,7 @@ export default function App() {
       window.removeEventListener('catalog:unauthorized', handler);
       window.removeEventListener('beforeunload', before);
     };
-  }, []);
+  }, [removal.locked]);
   useEffect(() => {
     if (!authenticated) return;
     const hash = routeHash({ labId: selected, tab, teamId, exerciseId: teamExercise });
@@ -381,10 +386,12 @@ export default function App() {
     };
   }, [dirtyContext]);
   const labs = usePaged<Lab>(authenticated ? '/labs' : null);
+  const availableLabs = labs.items.filter((l) => !removedLabs.has(l.id));
   const lab = useResource<Lab>(selected ? labPath(selected) : null);
   useEffect(() => {
-    if (authenticated && !selected && labs.items.length) setSelected(labs.items[0].id);
-  }, [authenticated, selected, labs.items]);
+    const next = labs.items.find((l) => !removedLabs.has(l.id));
+    if (authenticated && !selected && next) setSelected(next.id);
+  }, [authenticated, selected, labs.items, removedLabs]);
   function navigate(action: () => void) {
     if (dirtyContext.guard()) action();
   }
@@ -411,171 +418,197 @@ export default function App() {
     );
   return (
     <DirtyContext.Provider value={dirtyContext}>
-      <div className="app-shell">
-        <aside className="sidebar">
-          <div className="brand">
-            <div className="brand-mark">LC</div>
-            <div>
-              <strong>Lab Catalog</strong>
-              <span>Πλατφόρμα εργαστηρίων</span>
-            </div>
-          </div>
-          <div className="sidebar-heading">ΕΡΓΑΣΤΗΡΙΑ</div>
-          <LoadState {...labs} retry={labs.reload}>
-            <nav aria-label="Εργαστήρια">
-              {labs.items.map((l) => (
+      <OperationContext.Provider value={removal}>
+        <fieldset disabled={removal.pending} className="form-fields">
+          <div className="app-shell">
+            <aside className="sidebar">
+              <div className="brand">
+                <div className="brand-mark">LC</div>
+                <div>
+                  <strong>Lab Catalog</strong>
+                  <span>Πλατφόρμα εργαστηρίων</span>
+                </div>
+              </div>
+              <div className="sidebar-heading">ΕΡΓΑΣΤΗΡΙΑ</div>
+              <LoadState {...labs} retry={labs.reload}>
+                <nav aria-label="Εργαστήρια">
+                  {availableLabs.map((l) => (
+                    <button
+                      className={selected === l.id ? 'lab-link active' : 'lab-link'}
+                      key={l.id}
+                      onClick={() =>
+                        navigate(() => {
+                          setSelected(l.id);
+                          setTab('overview');
+                          setTeamId(undefined);
+                          setTeamExercise(undefined);
+                          setEditor(null);
+                        })
+                      }
+                    >
+                      <span>{l.title}</span>
+                      {l.archived && <span className="small muted">Αρχείο</span>}
+                    </button>
+                  ))}
+                </nav>
+                <More
+                  count={labs.items.length}
+                  total={labs.total}
+                  busy={labs.busy}
+                  onMore={labs.more}
+                />
+              </LoadState>
+              <button className="new-lab" onClick={() => navigate(() => setEditor('new'))}>
+                Νέο εργαστήριο
+              </button>
+              <div className="sidebar-footer">
+                <a href="/docs" target="_blank" rel="noreferrer noopener">
+                  API / τεκμηρίωση ↗
+                </a>
                 <button
-                  className={selected === l.id ? 'lab-link active' : 'lab-link'}
-                  key={l.id}
                   onClick={() =>
-                    navigate(() => {
-                      setSelected(l.id);
-                      setTab('overview');
-                      setTeamId(undefined);
-                      setTeamExercise(undefined);
-                      setEditor(null);
+                    navigate(async () => {
+                      try {
+                        await api('/session', { method: 'DELETE' });
+                        const s = await api<{ authenticated: boolean }>('/session');
+                        if (s.authenticated) throw new Error('Η αποσύνδεση δεν επιβεβαιώθηκε.');
+                        setAuthenticated(false);
+                        setSelected(undefined);
+                        setEditor(null);
+                        setTeamId(undefined);
+                      } catch (e) {
+                        setLogoutError((e as Error).message);
+                      }
                     })
                   }
                 >
-                  <span>{l.title}</span>
-                  {l.archived && <span className="small muted">Αρχείο</span>}
+                  Αποσύνδεση
                 </button>
-              ))}
-            </nav>
-            <More
-              count={labs.items.length}
-              total={labs.total}
-              busy={labs.busy}
-              onMore={labs.more}
-            />
-          </LoadState>
-          <button className="new-lab" onClick={() => navigate(() => setEditor('new'))}>
-            Νέο εργαστήριο
-          </button>
-          <div className="sidebar-footer">
-            <a href="/docs" target="_blank" rel="noreferrer noopener">
-              API / τεκμηρίωση ↗
-            </a>
-            <button
-              onClick={() =>
-                navigate(async () => {
-                  try {
-                    await api('/session', { method: 'DELETE' });
-                    const s = await api<{ authenticated: boolean }>('/session');
-                    if (s.authenticated) throw new Error('Η αποσύνδεση δεν επιβεβαιώθηκε.');
-                    setAuthenticated(false);
-                    setSelected(undefined);
-                    setEditor(null);
-                    setTeamId(undefined);
-                  } catch (e) {
-                    setLogoutError((e as Error).message);
-                  }
-                })
-              }
-            >
-              Αποσύνδεση
-            </button>
-            {logoutError && <p role="alert">{logoutError}</p>}
-          </div>
-        </aside>
-        <main>
-          <header className="topbar">
-            <span className="eyebrow">ΠΛΑΤΦΟΡΜΑ ΕΡΓΑΣΤΗΡΙΩΝ</span>
-            <span className="session-indicator">Συνεδρία χειριστή</span>
-          </header>
-          <div className="content">
-            {editor ? (
-              <LabEditor
-                key={editor === 'new' ? 'new' : selected}
-                lab={editor === 'edit' ? lab.value : undefined}
-                onCancel={() => navigate(() => setEditor(null))}
-                onSaved={(saved) => {
-                  setSelected(saved.id);
-                  lab.setValue(saved);
-                  labs.reload();
-                  setEditor(null);
-                }}
-              />
-            ) : !selected ? (
-              <Empty>Δεν υπάρχουν εργαστήρια ακόμη.</Empty>
-            ) : (
-              <LoadState {...lab} retry={lab.reload}>
-                {lab.value && (
-                  <>
-                    <div className="page-heading">
-                      <div>
-                        <p className="eyebrow">ΕΡΓΑΣΤΗΡΙΟ {lab.value.archived ? '· ΑΡΧΕΙΟ' : ''}</p>
-                        <h1>{lab.value.title}</h1>
-                        <p className="muted">
-                          {lab.value.description ||
-                            'Ομάδες, ασκήσεις και τεκμήρια σε έναν κατάλογο.'}
-                        </p>
-                      </div>
-                      <button onClick={() => navigate(() => setEditor('edit'))}>
-                        Ρυθμίσεις εργαστηρίου
-                      </button>
-                    </div>
-                    <nav className="tabs" aria-label="Καρτέλες εργαστηρίου">
-                      {[
-                        ['overview', 'Επισκόπηση'],
-                        ['exercises', 'Ασκήσεις & βαθμολόγηση'],
-                        ['teams', 'Ομάδες'],
-                        ['materials', 'Υλικό'],
-                      ].map(([key, label]) => (
-                        <button
-                          key={key}
-                          aria-current={tab === key ? 'page' : undefined}
-                          onClick={() =>
-                            navigate(() => {
-                              setTab(key);
-                              setTeamId(undefined);
-                              setTeamExercise(undefined);
-                            })
-                          }
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </nav>
-                    {tab === 'overview' && (
-                      <OverviewView
-                        key={selected}
-                        labId={selected}
-                        onTeam={(id) =>
-                          navigate(() => {
-                            setTeamId(id);
-                            setTab('teams');
-                          })
-                        }
-                      />
+                {logoutError && <p role="alert">{logoutError}</p>}
+              </div>
+            </aside>
+            <main>
+              <header className="topbar">
+                <span className="eyebrow">ΠΛΑΤΦΟΡΜΑ ΕΡΓΑΣΤΗΡΙΩΝ</span>
+                <span className="session-indicator">Συνεδρία χειριστή</span>
+              </header>
+              <div className="content">
+                {editor ? (
+                  <LabEditor
+                    key={editor === 'new' ? 'new' : selected}
+                    lab={editor === 'edit' ? lab.value : undefined}
+                    onCancel={() => navigate(() => setEditor(null))}
+                    onSaved={(saved) => {
+                      setSelected(saved.id);
+                      lab.setValue(saved);
+                      labs.reload();
+                      setEditor(null);
+                    }}
+                  />
+                ) : !selected ? (
+                  <Empty>Δεν υπάρχουν εργαστήρια ακόμη.</Empty>
+                ) : (
+                  <LoadState {...lab} retry={lab.reload}>
+                    {lab.value && (
+                      <>
+                        <div className="page-heading lab-heading">
+                          <div>
+                            <p className="eyebrow">
+                              ΕΡΓΑΣΤΗΡΙΟ {lab.value.archived ? '· ΑΡΧΕΙΟ' : ''}
+                            </p>
+                            <h1>{lab.value.title}</h1>
+                            <p className="muted">
+                              {lab.value.description ||
+                                'Ομάδες, ασκήσεις και τεκμήρια σε έναν κατάλογο.'}
+                            </p>
+                          </div>
+                          <div className="actions item-actions manage-actions">
+                            <button onClick={() => navigate(() => setEditor('edit'))}>
+                              Ρυθμίσεις εργαστηρίου
+                            </button>
+                            <Removal
+                              key={lab.value.id}
+                              path={labPath(lab.value.id)}
+                              revision={lab.value.revision}
+                              title={lab.value.title}
+                              kind="εργαστηρίου"
+                              onRemoved={() => {
+                                setRemovedLabs((old) => new Set([...old, selected]));
+                                setSelected(undefined);
+                                setTab('overview');
+                                setEditor(null);
+                                setTeamId(undefined);
+                                setTeamExercise(undefined);
+                                lab.setValue(undefined);
+                                labs.setValue(undefined);
+                                labs.reload();
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <nav className="tabs" aria-label="Καρτέλες εργαστηρίου">
+                          {[
+                            ['overview', 'Επισκόπηση'],
+                            ['exercises', 'Ασκήσεις & βαθμολόγηση'],
+                            ['teams', 'Ομάδες'],
+                            ['materials', 'Υλικό'],
+                          ].map(([key, label]) => (
+                            <button
+                              key={key}
+                              aria-current={tab === key ? 'page' : undefined}
+                              onClick={() =>
+                                navigate(() => {
+                                  setTab(key);
+                                  setTeamId(undefined);
+                                  setTeamExercise(undefined);
+                                })
+                              }
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </nav>
+                        {tab === 'overview' && (
+                          <OverviewView
+                            key={selected}
+                            labId={selected}
+                            onTeam={(id) =>
+                              navigate(() => {
+                                setTeamId(id);
+                                setTab('teams');
+                              })
+                            }
+                          />
+                        )}
+                        {tab === 'exercises' && <Exercises key={selected} labId={selected} />}
+                        {tab === 'teams' &&
+                          (teamId ? (
+                            <TeamDetail
+                              key={`${selected}/${teamId}`}
+                              labId={selected}
+                              teamId={teamId}
+                              exerciseId={teamExercise}
+                              onExercise={setTeamExercise}
+                              onBack={() => {
+                                setTeamId(undefined);
+                                setTeamExercise(undefined);
+                              }}
+                              onTeam={setTeamId}
+                            />
+                          ) : (
+                            <Teams key={selected} labId={selected} onTeam={(id) => setTeamId(id)} />
+                          ))}
+                        {tab === 'materials' && <Materials key={selected} labId={selected} />}
+                      </>
                     )}
-                    {tab === 'exercises' && <Exercises key={selected} labId={selected} />}
-                    {tab === 'teams' &&
-                      (teamId ? (
-                        <TeamDetail
-                          key={`${selected}/${teamId}`}
-                          labId={selected}
-                          teamId={teamId}
-                          exerciseId={teamExercise}
-                          onExercise={setTeamExercise}
-                          onBack={() => {
-                            setTeamId(undefined);
-                            setTeamExercise(undefined);
-                          }}
-                          onTeam={setTeamId}
-                        />
-                      ) : (
-                        <Teams key={selected} labId={selected} onTeam={(id) => setTeamId(id)} />
-                      ))}
-                    {tab === 'materials' && <Materials key={selected} labId={selected} />}
-                  </>
+                  </LoadState>
                 )}
-              </LoadState>
-            )}
+              </div>
+            </main>
           </div>
-        </main>
-      </div>
-      {expired && <Login overlay onLogin={() => setExpired(false)} />}
+        </fieldset>
+        {expired && <Login overlay onLogin={() => setExpired(false)} />}
+      </OperationContext.Provider>
     </DirtyContext.Provider>
   );
 }

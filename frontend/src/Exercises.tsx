@@ -3,6 +3,8 @@ import { api, id, json, labPath } from './api';
 import { compareDecimal, parseDecimal, sumDecimals } from './decimal';
 import { DirtyContext, Empty, Field, LoadState, More, SaveForm, usePaged } from './ui';
 import type { Exercise } from './types';
+import Removal from './Removal';
+import { OperationContext, useOperations } from './OperationContext';
 export function validateExercise(d: Exercise) {
   if (!d.title.trim()) return 'Συμπληρώστε τίτλο.';
   if (!Number.isInteger(Number(d.position)) || Number(d.position) < 0)
@@ -181,6 +183,7 @@ function ExerciseEditor({
                   </Field>
                   <button
                     type="button"
+                    className="compact-delete editor-remove"
                     onClick={() => set({ criteria: d.criteria.filter((_, i) => i !== index) })}
                   >
                     Αφαίρεση κριτηρίου {index + 1}
@@ -215,6 +218,7 @@ function ExerciseEditor({
   );
 }
 export default function Exercises({ labId }: { labId: string }) {
+  const removal = useOperations();
   const list = usePaged<Exercise>(`${labPath(labId)}/exercises`);
   const [editing, setEditing] = useState<Exercise | null | undefined>();
   const context = useContext(DirtyContext);
@@ -225,76 +229,90 @@ export default function Exercises({ labId }: { labId: string }) {
     /* bad API value is not fabricated */
   }
   return (
-    <>
-      <div className="section-heading">
-        <div>
-          <h2>Ασκήσεις & βαθμολόγηση</h2>
-          <p className="muted">
-            Σύνολο ενεργών μονάδων {list.items.length < list.total ? '(φορτωμένες ασκήσεις)' : ''}:{' '}
-            <strong>{total}</strong>
-          </p>
-        </div>
-        <button
-          className="primary"
-          onClick={() => {
-            if (context.guard()) setEditing(null);
-          }}
-        >
-          Νέα άσκηση
-        </button>
-      </div>
-      {editing !== undefined && (
-        <ExerciseEditor
-          key={editing?.id || 'new'}
-          labId={labId}
-          exercise={editing || undefined}
-          onSaved={list.reload}
-          onCancel={() => {
-            if (context.guard()) setEditing(undefined);
-          }}
-        />
-      )}
-      <LoadState {...list} retry={list.reload}>
-        {!list.items.length ? (
-          <Empty>Δεν έχουν οριστεί ασκήσεις. Η κλίμακα του εργαστηρίου είναι δική σας.</Empty>
-        ) : (
-          <div className="cards">
-            {[...list.items]
-              .sort((a, b) => a.position - b.position)
-              .map((x) => (
-                <article className="resource-card" key={x.id}>
-                  <div className="section-heading">
-                    <div>
-                      <span className="eyebrow">ΘΕΣΗ {x.position}</span>
-                      <h3>{x.title}</h3>
-                    </div>
-                    <span className="points">
-                      {x.max_points} <small>μονάδες</small>
-                    </span>
-                  </div>
-                  <p className="muted">{x.description || 'Χωρίς περιγραφή'}</p>
-                  <div className="actions">
-                    <span className="badge">
-                      {x.grading_mode === 'criteria'
-                        ? `${x.criteria.length} κριτήρια`
-                        : 'Χειροκίνητη'}
-                    </span>
-                    {x.archived && <span className="badge warn">Αρχειοθετημένη</span>}
-                    <button
-                      onClick={() => {
-                        if (context.guard()) setEditing(x);
-                      }}
-                    >
-                      Επεξεργασία {x.title}
-                    </button>
-                  </div>
-                </article>
-              ))}
+    <OperationContext.Provider value={removal}>
+      <fieldset disabled={removal.pending} className="form-fields">
+        <div className="section-heading">
+          <div>
+            <h2>Ασκήσεις & βαθμολόγηση</h2>
+            <p className="muted">
+              Σύνολο ενεργών μονάδων {list.items.length < list.total ? '(φορτωμένες ασκήσεις)' : ''}
+              : <strong>{total}</strong>
+            </p>
           </div>
+          <button
+            className="primary"
+            onClick={() => {
+              if (context.guard()) setEditing(null);
+            }}
+          >
+            Νέα άσκηση
+          </button>
+        </div>
+        {editing !== undefined && (
+          <ExerciseEditor
+            key={editing?.id || 'new'}
+            labId={labId}
+            exercise={editing || undefined}
+            onSaved={list.reload}
+            onCancel={() => {
+              if (context.guard()) setEditing(undefined);
+            }}
+          />
         )}
-        <More count={list.items.length} total={list.total} busy={list.busy} onMore={list.more} />
-        {list.moreError && <p role="alert">{list.moreError.message}</p>}
-      </LoadState>
-    </>
+        <LoadState {...list} retry={list.reload}>
+          {!list.items.length ? (
+            <Empty>Δεν έχουν οριστεί ασκήσεις. Η κλίμακα του εργαστηρίου είναι δική σας.</Empty>
+          ) : (
+            <div className="cards">
+              {[...list.items]
+                .sort((a, b) => a.position - b.position)
+                .map((x) => (
+                  <article className="resource-card" key={x.id}>
+                    <div className="section-heading">
+                      <div>
+                        <span className="eyebrow">ΘΕΣΗ {x.position}</span>
+                        <h3>{x.title}</h3>
+                      </div>
+                      <span className="points">
+                        {x.max_points} <small>μονάδες</small>
+                      </span>
+                    </div>
+                    <p className="muted">{x.description || 'Χωρίς περιγραφή'}</p>
+                    <div className="actions item-actions">
+                      <div className="item-status">
+                        <span className="badge">
+                          {x.grading_mode === 'criteria'
+                            ? `${x.criteria.length} κριτήρια`
+                            : 'Χειροκίνητη'}
+                        </span>
+                        {x.archived && <span className="badge warn">Αρχειοθετημένη</span>}
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (context.guard()) setEditing(x);
+                        }}
+                      >
+                        Επεξεργασία {x.title}
+                      </button>
+                      <Removal
+                        path={`${labPath(labId)}/exercises/${id(x.id)}`}
+                        revision={x.revision}
+                        title={x.title}
+                        kind="άσκησης"
+                        onRemoved={() => {
+                          setEditing((current) => (current?.id === x.id ? undefined : current));
+                          list.reload();
+                        }}
+                      />
+                    </div>
+                  </article>
+                ))}
+            </div>
+          )}
+          <More count={list.items.length} total={list.total} busy={list.busy} onMore={list.more} />
+          {list.moreError && <p role="alert">{list.moreError.message}</p>}
+        </LoadState>
+      </fieldset>
+    </OperationContext.Provider>
   );
 }

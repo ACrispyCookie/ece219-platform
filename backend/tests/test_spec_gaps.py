@@ -301,7 +301,7 @@ def test_version_one_records_migrate_and_corrections_survive_restart(client, tmp
             changed = restarted.patch(path, json={'revision': 1, 'title': 'Migrated correction'})
             assert changed.status_code == 200 and changed.json()['revision'] == 2
         with restarted.app.state.catalog.db.connect() as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 2
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 3
     with TestClient(create_app(tmp_path / 'state', ['testserver'])) as again:
         again.headers.update(client.headers)
         for path in [mp, ep]:

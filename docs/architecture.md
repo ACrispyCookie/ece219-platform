@@ -15,7 +15,8 @@ Greek React UI / authenticated API client / future MCP adapter
 - `backend/lab_catalog/schemas.py` defines the version-one wire contract, finite decimal strings, rubric validation and relationship payloads.
 - `api.py` owns HTTP routing, authentication, exact Host/Origin checks, bounded requests, OpenAPI and inert downloads. It serves a whitelist of built frontend assets, not the private data directory.
 - `service.py` owns catalog operations: explicit lab/team relationships, revisions, rubric changes, assessment history, evidence, overview and exports.
-- `database.py` owns SQLite schema initialization, transactions, foreign keys and immutable assessment-history triggers. Each operation uses its own connection.
+- `database.py` owns SQLite schema initialization, transactions, foreign keys and assessment-history protection. Each operation uses its own connection; ordinary history updates/deletes are rejected, while a confirmed cascade authorizes only its exact planned history IDs on that connection.
+- `deletion.py` owns the deterministic scoped removal plan, distinct impact counts and full-state confirmation fingerprint. Preview and execution share the same planner; execution checks the fingerprint inside the write transaction and removes rows in foreign-key-safe order.
 - `files.py` owns immutable SHA-256-addressed blobs, integrity validation and bounded read-only ZIP inspection. Uploaded code is never imported or executed.
 - `frontend/src/` owns interaction and presentation. State is authoritative on the server; writes are confirmed by reads. The browser's in-progress forms are not the assessment database.
 

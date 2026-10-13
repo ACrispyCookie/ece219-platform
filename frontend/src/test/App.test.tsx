@@ -1,4 +1,5 @@
 // All data and tokens in this suite are explicitly synthetic HTTP fixtures.
+import { confirmRemoval } from './removal-dialog-helpers';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, it, expect, vi } from 'vitest';
@@ -99,6 +100,7 @@ beforeEach(() => {
       stats: {},
     },
     [`GET /api/v1/labs/${lab.id}/materials`]: page([]),
+    [`GET /api/v1/labs/${lab.id}/files`]: page([]),
     [`GET /api/v1/labs/${lab.id}/teams/${team.id}`]: team,
     [`GET /api/v1/labs/${lab.id}/teams/${team.id}/submissions`]: page([]),
     [`GET /api/v1/labs/${lab.id}/teams/${team.id}/assessments/${exercise.id}`]: emptyAssessment,
@@ -730,7 +732,7 @@ it('logs out through DELETE and verifies that the session is unauthenticated', a
   expect(await screen.findByLabelText('Κλειδί πρόσβασης')).toBeVisible();
   expect(active).toBe(false);
 });
-it('deletes evidence only after confirmation and confirms absence by reading the collection', async () => {
+it('deletes evidence only after cascade impact confirmation and exact-target absence readback', async () => {
   let items = [
     {
       id: 'synthetic-delete-e',
@@ -751,6 +753,15 @@ it('deletes evidence only after confirmation and confirms absence by reading the
     'fetch',
     mockAPI({
       [`GET ${base}`]: () => new Response(JSON.stringify(page(items))),
+      [`GET ${base}/synthetic-delete-e/deletion-impact`]: {
+        dependencies: [],
+        unreferenced_files: [],
+        unreferenced_files_total: 0,
+        cascade_counts: [{ kind: 'evidence', count: 1 }],
+        confirmation_token: 'a'.repeat(64),
+      },
+      [`GET ${base}/synthetic-delete-e`]: () =>
+        items.length ? new Response(JSON.stringify(items[0])) : new Response(null, { status: 404 }),
       [`DELETE ${base}/synthetic-delete-e`]: () => {
         items = [];
         return new Response(null, { status: 204 });
@@ -759,7 +770,8 @@ it('deletes evidence only after confirmation and confirms absence by reading the
   );
   render(<App />);
   const user = await openTeamExercise();
-  await user.click(await screen.findByRole('button', { name: 'Διαγραφή τεκμηρίου' }));
+  await user.click(await screen.findByRole('button', { name: 'Διαγραφή τεκμηρίου Προς διαγραφή' }));
+  await confirmRemoval();
   expect(await screen.findByText('Το τεκμήριο διαγράφηκε και επιβεβαιώθηκε.')).toBeVisible();
   expect(items).toHaveLength(0);
 });

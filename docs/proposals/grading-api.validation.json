@@ -1,0 +1,126 @@
+{
+  "status": "proposed-contract-validated-not-implemented",
+  "openapi_version": "3.1.0",
+  "operations": 41,
+  "paths": 35,
+  "component_schemas": 95,
+  "resolved_internal_refs": 403,
+  "operations_by_authority": {
+    "operator": 24,
+    "worker": 10,
+    "agent": 7
+  },
+  "illustrative_schema_cases": [
+    {
+      "case": "run-explicit-version",
+      "schema": "RunCreate",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "run-missing-submission",
+      "schema": "RunCreate",
+      "expected_valid": false,
+      "passed": true
+    },
+    {
+      "case": "run-no-host-command",
+      "schema": "RunCreate",
+      "expected_valid": false,
+      "passed": true
+    },
+    {
+      "case": "activate-current-preconditions",
+      "schema": "BindPlan",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "accept-proposal-explicit-notes",
+      "schema": "AcceptProposal",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "accept-criteria-decimal-strings",
+      "schema": "AcceptProposal",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "reject-float-score",
+      "schema": "CriteriaReplacement",
+      "expected_valid": false,
+      "passed": true
+    },
+    {
+      "case": "reject-ambiguous-score-selection",
+      "schema": "ScoreSelection",
+      "expected_valid": false,
+      "passed": true
+    },
+    {
+      "case": "agent-cannot-claim-automatic-owner",
+      "schema": "AgentCriterionEvaluation",
+      "expected_valid": false,
+      "passed": true
+    },
+    {
+      "case": "check-approved-selector-shape",
+      "schema": "CheckRequest",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "check-reject-command",
+      "schema": "CheckRequest",
+      "expected_valid": false,
+      "passed": true
+    },
+    {
+      "case": "claim-explicit-identity",
+      "schema": "ClaimRequest",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "heartbeat-no-secret-fields",
+      "schema": "Heartbeat",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "agent-unresolved-is-null",
+      "schema": "AgentCriterionEvaluation",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "agent-resolved-needs-score",
+      "schema": "AgentCriterionEvaluation",
+      "expected_valid": false,
+      "passed": true
+    },
+    {
+      "case": "cleanup-ack-only-after-termination",
+      "schema": "CleanupAck",
+      "expected_valid": true,
+      "passed": true
+    },
+    {
+      "case": "cleanup-cannot-claim-still-running",
+      "schema": "CleanupAck",
+      "expected_valid": false,
+      "passed": true
+    },
+    {
+      "case": "heartbeat-refuses-admin-fields",
+      "schema": "Heartbeat",
+      "expected_valid": false,
+      "passed": true
+    }
+  ],
+  "limits": "Schema/structure validation only; service-level ownership, decimal range, compatibility, concurrency and sandbox behavior require implementation tests after approval.",
+  "application_source_modified": false,
+  "live_api_called": false
+}

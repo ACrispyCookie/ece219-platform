@@ -232,7 +232,9 @@ def test_cross_lab_and_team_references_and_url_schemes(client):
 def test_safe_delete_refuses_dependencies(client):
     _, ex, team, base = setup(client)
     assert client.delete('/api/v1' + base).status_code == 409
-    upload(client, base, team=team['id'])
+    f = upload(client, base, team=team['id']).json()
+    post(client, base + '/teams/' + team['id'] + '/evidence',
+         {'title': 'Referenced original', 'kind': 'file', 'exercise_id': ex['id'], 'file_id': f['id']})
     assert client.delete('/api/v1' + base + '/teams/' + team['id']).status_code == 409
     client.put(gradepath(base, team, ex), json={'rubric_revision': 1, 'revision': 0, 'notes': 'kept'})
     assert client.delete('/api/v1' + base + '/exercises/' + ex['id']).status_code == 409
@@ -249,7 +251,7 @@ def test_export_history_and_restart_persistence(client, tmp_path):
         again.headers.update(client.headers)
         assert again.get(gradepath(base, team, ex)).json()['score'] == '2'
     db = sqlite3.connect(tmp_path / 'state' / 'catalog.sqlite3')
-    assert db.execute('pragma user_version').fetchone()[0] == 2
+    assert db.execute('pragma user_version').fetchone()[0] == 3
     assert db.execute('pragma journal_mode').fetchone()[0] == 'wal'
 
 

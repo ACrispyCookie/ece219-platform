@@ -58,6 +58,24 @@ class Error(Model):
     details: list | dict | None = None
 
 
+class DeletionDependency(Model):
+    kind: Literal['labs', 'exercises', 'teams', 'files', 'materials', 'submissions', 'assessments', 'assessment_history', 'evidence']
+    count: Annotated[int, Field(ge=1)]
+
+
+class UnreferencedFile(Model):
+    id: str
+    filename: str
+
+
+class DeletionImpact(Model):
+    dependencies: list[DeletionDependency]
+    unreferenced_files: Annotated[list[UnreferencedFile], Field(max_length=50)]
+    unreferenced_files_total: Annotated[int, Field(ge=0)]
+    cascade_counts: list[DeletionDependency]
+    confirmation_token: Annotated[str, Field(pattern=r'^[0-9a-f]{64}$')]
+
+
 class SessionInput(Model):
     token: Annotated[str, Field(min_length=1, max_length=1000)]
 

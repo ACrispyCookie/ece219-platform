@@ -2,15 +2,15 @@
 
 ## Runtime and access
 
-`make serve` launches the installed Python package with an explicit data directory, bind address and advertised Host. Defaults are `workspace/catalog`, `127.0.0.1` and port `3458`. The built frontend must exist; run `make build` first.
+`make serve` launches the installed Python package with an explicit data directory, bind address and advertised Host. Defaults are `workspace/catalog`, `127.0.0.1` and port `3457`. The built frontend must exist; run `make build` first.
 
 The CLI is also available directly:
 
 ```bash
 .venv/bin/python -m lab_catalog serve \
   --data-dir workspace/catalog \
-  --host 127.0.0.1 --port 3458 \
-  --allowed-host 127.0.0.1:3458 \
+  --host 127.0.0.1 --port 3457 \
+  --allowed-host 127.0.0.1:3457 \
   --frontend-dir frontend/dist
 ```
 
@@ -27,6 +27,10 @@ A data directory contains:
 - `operator-token` for API access and signing sessions.
 
 Do not edit the database or blob files behind the application's back. Blob downloads verify stored size and SHA-256. Symlink-based data paths are rejected. Schema version is stored in SQLite `user_version`; unsupported versions fail startup rather than being silently converted.
+
+Schema version3 migrates history deletion protection transactionally. History remains immutable during ordinary operations, but explicitly confirmed cascades may delete their exact planned history rows. Back up the full data directory before upgrading; an older application cannot open version3 state.
+
+Confirmed cascading deletion removes catalog records and attachment metadata, not blob bytes or separately held backups. This includes references used for downloads; once metadata is deleted it is no longer addressable through the API. Shared physical content is retained. There is no secure-erasure or garbage-collection operation.
 
 ## Backups and restores
 

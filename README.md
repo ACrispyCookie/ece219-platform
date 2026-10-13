@@ -1,4 +1,4 @@
-# Lab Catalog
+# ECE219 · Lab Catalog
 
 A private, API-first platform for organizing teaching labs, teams, submissions and exercise assessments. One Greek web interface provides lab setup, a team-by-exercise overview, grading, notes and evidence. Labs and rubrics are configured through the application rather than through lab-specific scripts.
 
@@ -32,12 +32,12 @@ make build
 make serve
 ```
 
-Open `http://127.0.0.1:3458/`. The server initializes an empty catalog under `workspace/catalog/`. It generates an operator access token in `workspace/catalog/operator-token`; copy its contents into the application's login form using a local password manager or trusted local interface. Do not put the token in URLs, source files or shared chat.
+Open `http://127.0.0.1:3457/`. The server initializes an empty catalog under `workspace/catalog/`. It generates an operator access token in `workspace/catalog/operator-token`; copy its contents into the application's login form using a local password manager or trusted local interface. Do not put the token in URLs, source files or shared chat.
 
 The default listener is loopback. To bind to a trusted LAN interface, supply the machine's actual address:
 
 ```bash
-make serve HOST=192.168.1.5 PORT=3458
+make serve HOST=192.168.1.5 PORT=3457
 ```
 
 Host and browser Origin checks require the exact advertised address and port. Authentication is still required on the LAN. Use a VPN or an HTTPS deployment when traffic crosses an untrusted network; the CLI does not terminate TLS or trust forwarded proxy headers.
@@ -52,6 +52,8 @@ Host and browser Origin checks require the exact advertised address and port. Au
 6. Use the overview to inspect completion and outstanding work, or export the lab's metadata and assessment history as JSON.
 
 Assessment and configuration changes require the current revision. Conflicts preserve the editor's draft rather than overwriting another client's changes.
+
+Compact Delete controls are available for labs, exercises, teams, materials, submissions, assessments, evidence and uploads. The confirmation names the target and shows the related records that will be removed; deleting a higher-level entity removes its contained catalog records in one transaction, including relevant assessment history. Archive remains a non-destructive alternative. Stored blob bytes and separate backups are retained—catalog deletion is not secure erasure. See [deletion scope and confirmation](docs/api.md#preview-confirm-and-delete).
 
 ## API and agent clients
 

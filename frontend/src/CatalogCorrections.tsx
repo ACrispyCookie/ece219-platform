@@ -108,7 +108,7 @@ export function MaterialCorrection({
 }: {
   labId: string;
   initial: Material;
-  onSaved: () => void;
+  onSaved: (saved: Material) => void;
   onCancel: () => void;
 }) {
   const correction = useCorrection(`${labPath(labId)}/materials/${id(initial.id)}`, initial);
@@ -131,10 +131,13 @@ export function MaterialCorrection({
       }}
       read={correction.read}
       compareRead={correction.compareRead}
-      onReload={replacement.clear}
-      onSaved={() => {
+      onReload={(saved) => {
         replacement.clear();
-        onSaved();
+        onSaved(saved);
+      }}
+      onSaved={(saved) => {
+        replacement.clear();
+        onSaved(saved);
       }}
       onCancel={onCancel}
     >

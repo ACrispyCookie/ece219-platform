@@ -2,9 +2,12 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 import sqlite3
+import hmac
+import re
 from uuid import uuid4
 
 from .database import Database
+from .deletion import build_plan
 from .files import BlobStore, inspect_zip, safe_filename
 from . import schemas as s
 
@@ -42,6 +45,11 @@ def page(items, limit, offset):
 COLUMNS = {'labs': (), 'exercises': ('lab_id',), 'teams': ('lab_id',), 'files': ('lab_id', 'team_id'), 'materials': ('lab_id', 'exercise_id', 'file_id'), 'submissions': ('lab_id', 'team_id', 'file_id'), 'assessments': ('team_id', 'exercise_id', 'submission_id'), 'evidence': ('lab_id', 'team_id', 'exercise_id', 'submission_id', 'file_id')}
 CREATE_MODELS = {'labs': s.LabCreate, 'exercises': s.ExerciseCreate, 'teams': s.TeamCreate}
 RUBRIC_FIELDS = ('max_points', 'grading_mode', 'grading_instructions', 'criteria')
+# This exact predicate is shared by diagnostics and lab/team cleanup; blobs are not
+# part of metadata removal and are never discarded by either delete path.
+UNREFERENCED_FILE = '''NOT EXISTS (SELECT 1 FROM materials m WHERE m.file_id=f.id)
+    AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.file_id=f.id)
+    AND NOT EXISTS (SELECT 1 FROM evidence e WHERE e.file_id=f.id)'''
 
 
 def grading_signature(exercise):
@@ -105,12 +113,145 @@ class Catalog:
             self.db.save(c, table, new, COLUMNS[table], update=True)
             return new
 
-    def delete(self, table, identifier, lab_id=None):
+    @staticmethod
+    def dependency_counts(c, queries, identifier):
+        dependencies = []
+        for kind, query in queries:
+            count = c.execute(query, (identifier,)).fetchone()[0]
+            if count:
+                dependencies.append({'kind': kind, 'count': count})
+        return dependencies
+
+    def deletion_details(self, c, table, identifier):
+        """Count record types within the caller's already-validated transaction.
+
+        Indirect assessment/history records are reported separately, not summed
+        as distinct blockers. Exercise files belong to the lab, not the exercise.
+        """
+        details = {'dependencies': [], 'unreferenced_files': [], 'unreferenced_files_total': 0}
+        if table == 'labs':
+            queries = [(kind, f'SELECT COUNT(*) FROM {kind} WHERE lab_id=?')
+                       for kind in ('exercises', 'teams')]
+            queries.append(('files', 'SELECT COUNT(*) FROM files f WHERE f.lab_id=? AND NOT (' + UNREFERENCED_FILE + ')'))
+            queries.extend((kind, f'SELECT COUNT(*) FROM {kind} WHERE lab_id=?')
+                           for kind in ('materials', 'submissions'))
+            queries.extend([
+                ('assessments', 'SELECT COUNT(*) FROM assessments a JOIN teams t ON t.id=a.team_id WHERE t.lab_id=?'),
+                ('assessment_history', 'SELECT COUNT(*) FROM assessment_history h JOIN assessments a ON a.id=h.assessment_id JOIN teams t ON t.id=a.team_id WHERE t.lab_id=?'),
+                ('evidence', 'SELECT COUNT(*) FROM evidence WHERE lab_id=?'),
+            ])
+            unreferenced = 'FROM files f WHERE f.lab_id=? AND ' + UNREFERENCED_FILE
+        elif table == 'teams':
+            queries = [
+                ('files', 'SELECT COUNT(*) FROM files f WHERE f.team_id=? AND NOT (' + UNREFERENCED_FILE + ')'),
+                ('submissions', 'SELECT COUNT(*) FROM submissions WHERE team_id=?'),
+                ('assessments', 'SELECT COUNT(*) FROM assessments WHERE team_id=?'),
+                ('assessment_history', 'SELECT COUNT(*) FROM assessment_history h JOIN assessments a ON a.id=h.assessment_id WHERE a.team_id=?'),
+                ('evidence', 'SELECT COUNT(*) FROM evidence WHERE team_id=?'),
+            ]
+            unreferenced = 'FROM files f WHERE f.team_id=? AND ' + UNREFERENCED_FILE
+        else:
+            assert table == 'exercises'
+            queries = [
+                ('materials', 'SELECT COUNT(*) FROM materials WHERE exercise_id=?'),
+                ('assessments', 'SELECT COUNT(*) FROM assessments WHERE exercise_id=?'),
+                ('assessment_history', 'SELECT COUNT(*) FROM assessment_history h JOIN assessments a ON a.id=h.assessment_id WHERE a.exercise_id=?'),
+                ('evidence', 'SELECT COUNT(*) FROM evidence WHERE exercise_id=?'),
+            ]
+        if table in ('labs', 'teams'):
+            details['unreferenced_files_total'] = c.execute('SELECT COUNT(*) ' + unreferenced, (identifier,)).fetchone()[0]
+            rows = c.execute("SELECT f.id, json_extract(f.data, '$.filename') AS filename " + unreferenced + ' ORDER BY f.rowid LIMIT 50', (identifier,))
+            details['unreferenced_files'] = [dict(row) for row in rows]
+        details['dependencies'] = self.dependency_counts(c, queries, identifier)
+        return details
+
+    def deletion_root(self, c, table, identifier, lab_id=None, team_id=None):
+        if lab_id is not None: self.get(c, 'labs', lab_id)
+        if team_id is not None: self.get(c, 'teams', team_id, lab_id)
+        if table == 'assessments':
+            self.get(c, 'exercises', identifier, lab_id)
+            records = self.db.rows(c, table, 'team_id=? AND exercise_id=?', (team_id, identifier))
+            if not records: missing()
+            old = records[0]
+        else:
+            old = self.get(c, table, identifier, lab_id)
+            if team_id is not None and old.get('team_id') != team_id: missing()
+        return old
+
+    def record_deletion_details(self, c, table, identifier):
+        if table in ('labs', 'exercises', 'teams'):
+            return self.deletion_details(c, table, identifier)
+        details = {'dependencies': [], 'unreferenced_files': [], 'unreferenced_files_total': 0}
+        if table == 'files':
+            queries = [(kind, f'SELECT COUNT(*) FROM {kind} WHERE file_id=?')
+                       for kind in ('materials', 'submissions', 'evidence')]
+        elif table == 'submissions':
+            queries = [
+                ('evidence', 'SELECT COUNT(*) FROM evidence WHERE submission_id=?'),
+                ('assessments', "SELECT COUNT(*) FROM assessments a WHERE a.submission_id=? OR EXISTS (SELECT 1 FROM assessment_history h WHERE h.assessment_id=a.id AND json_extract(h.data,'$.submission_id')=? )"),
+                ('assessment_history', "SELECT COUNT(*) FROM assessment_history h WHERE h.assessment_id IN (SELECT a.id FROM assessments a WHERE a.submission_id=? OR EXISTS (SELECT 1 FROM assessment_history x WHERE x.assessment_id=a.id AND json_extract(x.data,'$.submission_id')=?))"),
+            ]
+            for kind, sql in queries:
+                count = c.execute(sql, (identifier,) if kind == 'evidence' else (identifier, identifier)).fetchone()[0]
+                if count: details['dependencies'].append({'kind': kind, 'count': count})
+            return details
+        elif table == 'assessments':
+            queries = [('assessment_history', 'SELECT COUNT(*) FROM assessment_history WHERE assessment_id=?')]
+        else:
+            queries = []
+        details['dependencies'] = self.dependency_counts(c, queries, identifier)
+        return details
+
+    def deletion_impact(self, table, identifier, lab_id=None, team_id=None):
+        with self.db.connect() as c:
+            old = self.deletion_root(c, table, identifier, lab_id, team_id)
+            plan = build_plan(c, table, old['id'], lab_id or old['id'])
+            return {**self.record_deletion_details(c, table, old['id']),
+                    'cascade_counts': plan.counts, 'confirmation_token': plan.confirmation_token}
+
+    def delete_file(self, lab_id, file_id, **options):
+        """Remove unused metadata, or explicitly confirmed lab-scoped references."""
+        return self.delete('files', file_id, lab_id, **options)
+
+    def delete(self, table, identifier, lab_id=None, *, revision=None,
+               team_id=None, cascade=False, confirmation_token=None):
         try:
             with self.db.connect(write=True) as c:
-                self.get(c, table, identifier, lab_id)
+                old = self.deletion_root(c, table, identifier, lab_id, team_id)
+                identifier = old['id']
+                if revision is not None and revision != old['revision']:
+                    raise CatalogError(409, 'conflict', 'Revision conflict', {'current_revision': old['revision']})
+                if cascade:
+                    if not isinstance(confirmation_token, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', confirmation_token):
+                        invalid('Confirmed deletion requires a 64-hex confirmation_token')
+                    plan = build_plan(c, table, identifier, lab_id or identifier)
+                    if not hmac.compare_digest(confirmation_token, plan.confirmation_token):
+                        raise CatalogError(409, 'deletion_changed', 'Deletion impact changed; refresh and confirm the new plan')
+                    plan.execute(c)
+                    return
+                if table in ('files', 'submissions', 'assessments'):
+                    details = self.record_deletion_details(c, table, identifier)
+                    if details['dependencies']:
+                        if table == 'files':
+                            raise CatalogError(409, 'conflict', 'File has dependents; referenced originals cannot be deleted', {'dependencies': details['dependencies']})
+                        raise CatalogError(409, 'conflict', 'Resource has dependents; archive instead of deleting', details)
+                if table in ('labs', 'exercises', 'teams'):
+                    details = self.deletion_details(c, table, identifier)
+                    if details['dependencies']:
+                        raise CatalogError(409, 'conflict', 'Resource has dependents; archive instead of deleting', details)
+                if table in ('labs', 'teams'):
+                    # Only after every real blocker is ruled out, remove all
+                    # orphan metadata (not just the 50-row diagnostic preview).
+                    # The same write lock prevents new references, and any
+                    # failure rolls metadata and its owner back together.
+                    scope = 'lab_id' if table == 'labs' else 'team_id'
+                    c.execute('DELETE FROM files WHERE id IN (SELECT f.id FROM files f WHERE f.' + scope + '=? AND ' + UNREFERENCED_FILE + ')', (identifier,))
                 c.execute(f'DELETE FROM {table} WHERE id=?', (identifier,))
         except sqlite3.IntegrityError:
+            if cascade or table in ('labs', 'exercises', 'teams', 'files', 'evidence', 'submissions', 'assessments'):
+                # Known dependencies already have structured conflicts above;
+                # unexpected storage failures must not invent phantom blockers.
+                raise
             raise CatalogError(409, 'conflict', 'Resource has dependents; archive instead of deleting') from None
 
     def upload(self, lab_id, team_id, filename, stream, media_type, submission=False):
@@ -270,12 +411,8 @@ class Catalog:
             self.db.save(c, 'evidence', obj, COLUMNS['evidence'])
             return obj
 
-    def delete_evidence(self, lab_id, team_id, evidence_id):
-        with self.db.connect(write=True) as c:
-            self.get(c, 'teams', team_id, lab_id)
-            obj = self.get(c, 'evidence', evidence_id, lab_id)
-            if obj['team_id'] != team_id: missing()
-            c.execute('DELETE FROM evidence WHERE id=?', (evidence_id,))
+    def delete_evidence(self, lab_id, team_id, evidence_id, **options):
+        return self.delete('evidence', evidence_id, lab_id, team_id=team_id, **options)
 
     def overview(self, lab_id, limit, offset):
         with self.db.connect() as c:

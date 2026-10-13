@@ -10,7 +10,7 @@ def main():
     serve = commands.add_parser('serve', help='Serve the private catalog and optional built SPA')
     serve.add_argument('--data-dir', required=True)
     serve.add_argument('--host', default='127.0.0.1')
-    serve.add_argument('--port', type=int, default=3460)
+    serve.add_argument('--port', type=int, default=3457)
     serve.add_argument('--allowed-host', action='append', default=None, help='Exact advertised host:port; repeat for additional authorities')
     serve.add_argument('--frontend-dir', default=None)
     args = parser.parse_args()

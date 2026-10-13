@@ -16,6 +16,25 @@ def reject_symlinks(path):
     return path
 
 
+class CatalogConnection(sqlite3.Connection):
+    """History deletion capability is local, short-lived and ID-bounded."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._history_delete_ids = frozenset()
+        self.create_function('catalog_history_delete_allowed', 1,
+                             lambda identifier: int(identifier in self._history_delete_ids))
+
+    @contextmanager
+    def allow_history_deletion(self, identifiers):
+        if self._history_delete_ids:
+            raise RuntimeError('nested history deletion capability')
+        self._history_delete_ids = frozenset(identifiers)
+        try:
+            yield
+        finally:
+            self._history_delete_ids = frozenset()
+
+
 class Database:
     def __init__(self, root):
         self.root = reject_symlinks(root)
@@ -25,7 +44,7 @@ class Database:
             reject_symlinks(self.root / name)
         with self.connect(write=True) as c:
             version = c.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise ValueError('unsupported database schema version')
             if version == 0:
                 c.executescript('''
@@ -58,13 +77,23 @@ class Database:
                 for table in ('materials', 'evidence'):
                     c.execute(f"UPDATE {table} SET data=json_set(data, '$.revision', COALESCE(json_extract(data,'$.revision'),1), '$.updated_at', json_extract(data,'$.updated_at'))")
                 c.execute('PRAGMA user_version=2')
+                version = 2
+            if version == 2:
+                # Schema migration only, never per-request trigger replacement.
+                # Raw connections without the function fail closed on DELETE.
+                if not c.in_transaction: c.execute('BEGIN IMMEDIATE')
+                c.execute('DROP TRIGGER history_no_delete')
+                c.execute("""CREATE TRIGGER history_no_delete BEFORE DELETE ON assessment_history
+                    WHEN catalog_history_delete_allowed(OLD.id)=0
+                    BEGIN SELECT RAISE(ABORT,'immutable assessment history'); END""")
+                c.execute('PRAGMA user_version=3')
 
     @contextmanager
     def connect(self, write=False):
         reject_symlinks(self.path)
         for name in ('catalog.sqlite3-wal', 'catalog.sqlite3-shm'):
             reject_symlinks(self.root / name)
-        c = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        c = sqlite3.connect(self.path, timeout=30, isolation_level=None, factory=CatalogConnection)
         c.row_factory = sqlite3.Row
         c.execute('PRAGMA foreign_keys=ON')
         c.execute('PRAGMA journal_mode=WAL')

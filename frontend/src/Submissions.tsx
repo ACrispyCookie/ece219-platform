@@ -1,7 +1,9 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, download, id, labPath } from './api';
 import { Empty, Field, LoadState, More, useDirty, useResource } from './ui';
 import type { ArchiveMember, Page, Submission } from './types';
+import Removal from './Removal';
+import { OperationContext, useOperations } from './OperationContext';
 function Inventory({ submissionId }: { submissionId: string }) {
   const submission = useResource<Submission>(`/submissions/${id(submissionId)}`);
   const inventory = useResource<
@@ -120,6 +122,8 @@ export default function Submissions({
   onMore: () => void;
   onRefresh: () => void;
 }) {
+  const operations = useOperations();
+  const owner = useRef(Symbol('submissions-upload'));
   const [files, setFiles] = useState<File[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string>();
@@ -127,14 +131,18 @@ export default function Submissions({
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   useDirty(files.length > 0 || busy);
+  useEffect(() => {
+    if (!pending && selected && !items.some((s) => s.id === selected)) setSelected(undefined);
+  }, [items, pending, selected]);
   async function upload() {
-    if (busy || !files.length) return;
+    if (!operations.acquireSave(owner.current)) return;
     const selectedFiles = files;
-    setBusy(true);
-    setError('');
-    setSuccess('');
     let completed = 0;
     try {
+      if (!selectedFiles.length) return;
+      setBusy(true);
+      setError('');
+      setSuccess('');
       for (const file of selectedFiles) {
         const form = new FormData();
         form.append('file', file);
@@ -155,85 +163,113 @@ export default function Submissions({
     } finally {
       setBusy(false);
       onRefresh();
+      operations.releaseSave(owner.current);
     }
   }
   return (
-    <section>
-      <div className="section-heading">
-        <div>
-          <h2>Παραδόσεις ZIP</h2>
-          <p className="muted">
-            Κάθε μεταφόρτωση είναι ξεχωριστή έκδοση — ακόμη και με ίδιο αποτύπωμα.
-          </p>
-        </div>
-      </div>
-      <div className="panel upload-panel">
-        <Field label="Αρχεία ZIP">
-          <input
-            ref={fileInput}
-            disabled={busy}
-            type="file"
-            accept=".zip,application/zip"
-            multiple
-            onChange={(e) => {
-              setFiles(Array.from(e.target.files || []));
-              setSuccess('');
-            }}
-          />
-        </Field>
-        <button
-          className="primary"
-          disabled={busy || files.length === 0}
-          onClick={() => void upload()}
-        >
-          {busy ? 'Μεταφόρτωση…' : 'Μεταφόρτωση ZIP'}
-        </button>
-        {files.length > 0 && <p className="small muted">{files.map((f) => f.name).join(' · ')}</p>}
-        {error && (
-          <p className="notice error" role="alert">
-            {error}
-          </p>
-        )}
-        {success && (
-          <p role="status" className="success">
-            {success}
-          </p>
-        )}
-      </div>
-      {pending && items.length === 0 ? null : items.length === 0 ? (
-        <Empty>Δεν υπάρχουν παραδόσεις για αυτή την ομάδα.</Empty>
-      ) : (
-        <div className="versions">
-          {items.map((s) => (
-            <article className={selected === s.id ? 'version selected' : 'version'} key={s.id}>
-              <div>
-                <h3>{s.filename}</h3>
-                <p className="small muted">{s.created_at}</p>
-                <p className="mono small">{s.id}</p>
-                <p className="small mono muted">SHA-256: {s.sha256}</p>
-                <span className="badge">{s.archive_status}</span>
-                {s.archive_errors?.length > 0 && (
-                  <p className="warn">Προβλήματα αρχείου · {s.archive_errors.length}</p>
-                )}
-              </div>
-              <button aria-label={`Επιλογή παράδοσης ${s.id}`} onClick={() => setSelected(s.id)}>
-                {selected === s.id ? 'Επιλεγμένη' : 'Προβολή περιεχομένων'}
-              </button>
-            </article>
-          ))}
-        </div>
-      )}
-      {!pending && <More count={items.length} total={total} busy={loadingMore} onMore={onMore} />}
-      {selected ? (
-        <Inventory key={selected} submissionId={selected} />
-      ) : (
-        items.length > 0 && (
-          <p className="notice">
-            Επιλέξτε ρητά μία παράδοση για προβολή περιεχομένων. Δεν επιλέγεται αυτόματα η νεότερη ή
-            η καλύτερη.
-          </p>
-        )
-      )}
-    </section>
+    <OperationContext.Provider value={operations}>
+      <fieldset disabled={operations.pending} className="form-fields">
+        <section>
+          <div className="section-heading">
+            <div>
+              <h2>Παραδόσεις ZIP</h2>
+              <p className="muted">
+                Κάθε μεταφόρτωση είναι ξεχωριστή έκδοση — ακόμη και με ίδιο αποτύπωμα.
+              </p>
+            </div>
+          </div>
+          <div className="panel upload-panel">
+            <Field label="Αρχεία ZIP">
+              <input
+                ref={fileInput}
+                disabled={busy}
+                type="file"
+                accept=".zip,application/zip"
+                multiple
+                onChange={(e) => {
+                  if (operations.locked.current || operations.saves.current.has(owner.current))
+                    return;
+                  setFiles(Array.from(e.target.files || []));
+                  setSuccess('');
+                }}
+              />
+            </Field>
+            <button
+              className="primary"
+              disabled={busy || files.length === 0}
+              onClick={() => void upload()}
+            >
+              {busy ? 'Μεταφόρτωση…' : 'Μεταφόρτωση ZIP'}
+            </button>
+            {files.length > 0 && (
+              <p className="small muted">{files.map((f) => f.name).join(' · ')}</p>
+            )}
+            {error && (
+              <p className="notice error" role="alert">
+                {error}
+              </p>
+            )}
+            {success && (
+              <p role="status" className="success">
+                {success}
+              </p>
+            )}
+          </div>
+          {pending && items.length === 0 ? null : items.length === 0 ? (
+            <Empty>Δεν υπάρχουν παραδόσεις για αυτή την ομάδα.</Empty>
+          ) : (
+            <div className="versions">
+              {items.map((s) => (
+                <article className={selected === s.id ? 'version selected' : 'version'} key={s.id}>
+                  <div>
+                    <h3>{s.filename}</h3>
+                    <p className="small muted">{s.created_at}</p>
+                    <p className="mono small">{s.id}</p>
+                    <p className="small mono muted">SHA-256: {s.sha256}</p>
+                    <span className="badge">{s.archive_status}</span>
+                    {s.archive_errors?.length > 0 && (
+                      <p className="warn">Προβλήματα αρχείου · {s.archive_errors.length}</p>
+                    )}
+                  </div>
+                  <div className="actions item-actions">
+                    <button
+                      aria-label={`Επιλογή παράδοσης ${s.id}`}
+                      onClick={() => {
+                        if (!operations.locked.current) setSelected(s.id);
+                      }}
+                    >
+                      {selected === s.id ? 'Επιλεγμένη' : 'Προβολή περιεχομένων'}
+                    </button>
+                    <Removal
+                      path={`${labPath(labId)}/teams/${id(teamId)}/submissions/${id(s.id)}`}
+                      readPath={`/submissions/${id(s.id)}`}
+                      title={s.filename}
+                      kind="παράδοσης"
+                      onRemoved={() => {
+                        setSelected((current) => (current === s.id ? undefined : current));
+                        onRefresh();
+                      }}
+                    />
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          {!pending && (
+            <More count={items.length} total={total} busy={loadingMore} onMore={onMore} />
+          )}
+          {selected ? (
+            <Inventory key={selected} submissionId={selected} />
+          ) : (
+            items.length > 0 && (
+              <p className="notice">
+                Επιλέξτε ρητά μία παράδοση για προβολή περιεχομένων. Δεν επιλέγεται αυτόματα η
+                νεότερη ή η καλύτερη.
+              </p>
+            )
+          )}
+        </section>
+      </fieldset>
+    </OperationContext.Provider>
   );
 }

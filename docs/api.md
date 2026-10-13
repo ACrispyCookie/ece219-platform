@@ -97,7 +97,46 @@ GET `/labs/{lab_id}/overview` provides dynamic exercise columns, paged team rows
 
 GET `/labs/{lab_id}/export` returns the full lab's metadata, file references, submissions, evidence, assessments and assessment history with a schema version. It does not include original file bytes; download/backup those separately.
 
-Use `archived:true` with a revision-controlled PATCH when records should remain available but inactive. Safe DELETE operations reject referenced resources instead of cascading through assessments or immutable history.
+Use `archived:true` with a revision-controlled PATCH when a lab, exercise or team should remain available but inactive. The web interface's **Delete** actions instead perform confirmed cascading deletion.
+
+### Preview, confirm and delete
+
+All eight resource paths support GET `{path}/deletion-impact` and DELETE `{path}`:
+
+- `/labs/{lab_id}`
+- `/labs/{lab_id}/exercises/{exercise_id}`
+- `/labs/{lab_id}/teams/{team_id}`
+- `/labs/{lab_id}/materials/{material_id}`
+- `/labs/{lab_id}/files/{file_id}`
+- `/labs/{lab_id}/teams/{team_id}/submissions/{submission_id}`
+- `/labs/{lab_id}/teams/{team_id}/evidence/{evidence_id}`
+- `/labs/{lab_id}/teams/{team_id}/assessments/{exercise_id}`
+
+Impact includes positive, distinct per-table `cascade_counts` and a SHA-256 `confirmation_token` covering the complete plan and relevant record state. The older `dependencies`, bounded `unreferenced_files` preview (at most 50) and full `unreferenced_files_total` remain for restrictive-client diagnostics; they do not limit cascade execution.
+
+Show the actual target and `cascade_counts` to the operator, then send `DELETE {path}?cascade=true&confirmation_token={token}` only after confirmation. Include the displayed positive `revision` for labs, exercises, teams, materials, evidence and assessments; files/submissions are immutable and have no revision precondition. Ownership, revision and the recomputed plan are checked in the same write transaction. A changed plan returns `409 deletion_changed` without deleting anything: fetch a fresh preview and ask for confirmation again, never automatically retry.
+
+Without `cascade=true`, legacy restrictive deletion remains available and rejects dependent records. A missing or malformed cascade token returns422. Invalid cross-owner associations or surviving references that would require deleting outside the requested scope return409 with no changes.
+
+### What is removed
+
+- **Lab:** its teams, exercises, materials, submissions, files, evidence, assessments and assessment history.
+- **Team:** its submissions, evidence, assessments/history and team-owned uploads. The lab, exercises, sibling teams and shared lab uploads survive.
+- **Exercise:** associated materials, evidence and assessments/history, plus newly unreferenced attachment metadata. Teams and their submission versions survive.
+- **Submission:** linked evidence and assessments whose current or historical submission association targets that version, including those assessments' history. Other versions survive.
+- **Assessment:** that grade and its history; independent evidence remains.
+- **Material/evidence:** the selected record and its attached file metadata only when no surviving reference uses it.
+- **Upload:** referencing materials, submissions and evidence within its lab, plus their linked assessment/history descendants and newly unreferenced attachments. Other file IDs and other labs survive.
+
+Deletion is atomic and respects foreign keys. Assessment history remains immutable during ordinary operations; only the exact history IDs in an explicitly confirmed cascade are authorized for deletion on that transaction's connection.
+
+**This removes catalog records, not securely erased bytes.** Immutable content-addressed blobs and separately held backups remain private, including content shared with surviving records. No uploaded archive is rewritten; individual ZIP member entries are not separate editable entities.
+
+### Verification and interface behavior
+
+After204, verify exact-item GET404. File/submission readback uses `/files/{file_id}` and `/submissions/{submission_id}`. Assessment GET remains200 with `id:null`, revision zero, null score and ungraded status; its history must also be empty.
+
+The interface places compact Delete controls next to each item's management/view/download actions. It fetches the preview under shared synchronous mutation ownership, then displays a styled in-app modal with the target, server removal-count cards and an irreversible-action warning. Cancel receives initial focus; Cancel, Close, Escape and a backdrop click dismiss the confirmation without sending DELETE and restore focus to the trigger. During deletion and readback, the modal shows progress and cannot be dismissed or confirmed twice. Lists/routes/editors update only after readback. Unsaved drafts are guarded, pending saves/uploads cannot race removal, and conflicts retain the current view. Deletion warnings have accessible local-only close controls that restore focus and emit no HTTP mutation.
 
 ## Responses
 

@@ -27,7 +27,21 @@ COOKIE = 'lab_catalog_session'
 SESSION_SECONDS = 8 * 60 * 60
 Limit = Annotated[int, Query(ge=1, le=200)]
 Offset = Annotated[int, Query(ge=0)]
+DeleteRevision = Annotated[int | None, Query(ge=1, description='Optional displayed revision for concurrency-safe lab, exercise, team, material, evidence or assessment deletion; omission retains the legacy unguarded contract.')]
+DELETE_CONFIRMATION_DESCRIPTION = (' With cascade=true, confirmation_token is required from the scoped GET deletion-impact. '
+    'The SHA-256 fingerprint covers full deduplicated plan IDs, JSON resource state, associations, attachments and history, not just the 50-file preview. '
+    'Ownership and optional displayed revision are checked before token comparison inside BEGIN IMMEDIATE. '
+    'A changed plan returns 409 deletion_changed without writes; refresh and explicitly reconfirm. '
+    'The whole plan executes atomically in foreign-key-safe order, including only its authorized history IDs. '
+    'Cross-scope or surviving references return safe 409; no other lab is deleted. '
+    'This is catalog metadata deletion, not secure erasure: immutable shared-hash blob bytes remain private and retained.')
+IMPACT_CONFIRMATION_DESCRIPTION = (' Returns cascade_counts as distinct positive per-table counts including the root and a 64-hex confirmation_token for the complete scoped cascade. '
+    'Plan counts are separate from legacy dependencies. The unused-file preview remains bounded to 50 with its full total. '
+    'This read-only coherent snapshot neither deletes nor archives; cancelling requires no API write. Blob bytes remain private and retained, not securely erased.')
+
 bearer_schema = HTTPBearer(auto_error=False, scheme_name='BearerAuth')
+Cascade = Annotated[bool, Query(description='Explicitly delete the confirmed scoped catalog closure; defaults to restrictive legacy deletion. Blob bytes remain private and retained, not securely erased.')]
+ConfirmationToken = Annotated[str | None, Query(pattern=r'^[0-9a-fA-F]{64}$', description='Required with cascade=true. SHA-256 full-plan fingerprint from deletion-impact; changed plans return 409 deletion_changed without writes.')]
 cookie_schema = APIKeyCookie(name=COOKIE, auto_error=False, scheme_name='CookieAuth')
 
 
@@ -218,9 +232,15 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
     def patch_lab(lab_id: str, body: s.LabPatch):
         return catalog.patch('labs', lab_id, body)
 
-    @api.delete('/labs/{lab_id}', status_code=204)
-    def delete_lab(lab_id: str):
-        catalog.delete('labs', lab_id)
+    @api.get('/labs/{lab_id}/deletion-impact', response_model=s.DeletionImpact,
+             description='Read-only deletion diagnostics in one coherent transaction. Reports positive real blocker counts by type (including indirect assessments/history), not a deduplicated total. The files dependency counts only files referenced by materials, submissions, or evidence; unused file metadata does not block lab deletion. Lists at most 50 unreferenced file metadata IDs and literal filenames in upload order, with their full total for optional cleanup. Does not delete or archive anything.' + IMPACT_CONFIRMATION_DESCRIPTION)
+    def lab_deletion_impact(lab_id: str):
+        return catalog.deletion_impact('labs', lab_id)
+
+    @api.delete('/labs/{lab_id}', status_code=204,
+                description='Without cascade=true: Delete a lab with no real dependencies. Ownership/revision validation precedes transactional dependency counts. The files count includes referenced files only. If any real blocker exists, 409 details contains dependencies, unreferenced_files (at most 50), and unreferenced_files_total, and no metadata is cleaned. Otherwise all unreferenced lab upload metadata is removed together with the lab in the same write transaction; failures roll back both. Blob bytes remain immutable and shared content is preserved. No cascading deletion of associations or history, no automatic archival, and no separate user cleanup is required.' + DELETE_CONFIRMATION_DESCRIPTION)
+    def delete_lab(lab_id: str, revision: DeleteRevision = None, cascade: Cascade = False, confirmation_token: ConfirmationToken = None):
+        catalog.delete('labs', lab_id, revision=revision, cascade=cascade, confirmation_token=confirmation_token)
 
     @api.get('/labs/{lab_id}/exercises', response_model=s.Page[s.Exercise])
     def list_exercises(lab_id: str, limit: Limit = 50, offset: Offset = 0):
@@ -238,9 +258,15 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
     def patch_exercise(lab_id: str, exercise_id: str, body: s.ExercisePatch):
         return catalog.patch('exercises', exercise_id, body, lab_id)
 
-    @api.delete('/labs/{lab_id}/exercises/{exercise_id}', status_code=204)
-    def delete_exercise(lab_id: str, exercise_id: str):
-        catalog.delete('exercises', exercise_id, lab_id)
+    @api.get('/labs/{lab_id}/exercises/{exercise_id}/deletion-impact', response_model=s.DeletionImpact,
+             description='Read-only, lab-scoped deletion diagnostics in one coherent transaction. Reports positive material, evidence, assessment and assessment_history counts; files and teams are not direct exercise dependencies. unreferenced_files is empty and unreferenced_files_total is zero. Does not delete or archive anything.' + IMPACT_CONFIRMATION_DESCRIPTION)
+    def exercise_deletion_impact(lab_id: str, exercise_id: str):
+        return catalog.deletion_impact('exercises', exercise_id, lab_id)
+
+    @api.delete('/labs/{lab_id}/exercises/{exercise_id}', status_code=204,
+                description='Without cascade=true: Delete an unreferenced exercise only. Ownership/revision validation precedes transactional dependency counts. Dependency conflicts return details.dependencies for materials, evidence, assessments and assessment_history, plus empty unreferenced_files and zero unreferenced_files_total. No cascading deletion or automatic archival.' + DELETE_CONFIRMATION_DESCRIPTION)
+    def delete_exercise(lab_id: str, exercise_id: str, revision: DeleteRevision = None, cascade: Cascade = False, confirmation_token: ConfirmationToken = None):
+        catalog.delete('exercises', exercise_id, lab_id, revision=revision, cascade=cascade, confirmation_token=confirmation_token)
 
     @api.get('/labs/{lab_id}/teams', response_model=s.Page[s.Team])
     def list_teams(lab_id: str, limit: Limit = 50, offset: Offset = 0):
@@ -258,9 +284,15 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
     def patch_team(lab_id: str, team_id: str, body: s.TeamPatch):
         return catalog.patch('teams', team_id, body, lab_id)
 
-    @api.delete('/labs/{lab_id}/teams/{team_id}', status_code=204)
-    def delete_team(lab_id: str, team_id: str):
-        catalog.delete('teams', team_id, lab_id)
+    @api.get('/labs/{lab_id}/teams/{team_id}/deletion-impact', response_model=s.DeletionImpact,
+             description='Read-only, lab-scoped team deletion diagnostics in one coherent transaction. Reports positive files, submissions, assessments, assessment_history (joined through assessments) and evidence counts. Files count only team-owned metadata referenced anywhere by materials, submissions or evidence. Lists at most 50 unreferenced team file IDs and literal filenames in upload order, with their full total. Does not delete or archive anything.' + IMPACT_CONFIRMATION_DESCRIPTION)
+    def team_deletion_impact(lab_id: str, team_id: str):
+        return catalog.deletion_impact('teams', team_id, lab_id)
+
+    @api.delete('/labs/{lab_id}/teams/{team_id}', status_code=204,
+                description='Without cascade=true: Explicitly delete a team with no real dependencies, including its contained members and notes. Lab ownership/revision validation precedes transactional files, submissions, assessments, assessment_history and evidence dependency counts. Files count only team-owned metadata referenced anywhere by materials, submissions or evidence. Any blocker returns 409 with dependencies, unreferenced_files (at most 50) and unreferenced_files_total, with zero cleanup. Otherwise all unreferenced team upload metadata and the team are removed atomically; any storage failure rolls both back. Blob bytes, shared file metadata, other teams, the lab and immutable history remain unchanged. No cascading deletion or automatic archival.' + DELETE_CONFIRMATION_DESCRIPTION)
+    def delete_team(lab_id: str, team_id: str, revision: DeleteRevision = None, cascade: Cascade = False, confirmation_token: ConfirmationToken = None):
+        catalog.delete('teams', team_id, lab_id, revision=revision, cascade=cascade, confirmation_token=confirmation_token)
 
     async def validate_form(request: Request, allowed):
         form = await request.form()
@@ -282,6 +314,17 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
     @api.get('/labs/{lab_id}/files', response_model=s.Page[s.File])
     def list_files(lab_id: str, limit: Limit = 50, offset: Offset = 0):
         return page(catalog.list('files', lab_id), limit, offset)
+
+    @api.delete('/labs/{lab_id}/files/{file_id}', status_code=204,
+                responses={404: {'model': s.Error, 'description': 'Missing file or wrong lab; no reference details disclosed'},
+                           409: {'model': s.Error, 'description': 'Referenced metadata; details.dependencies contains positive materials/submissions/evidence reference counts'}},
+                description='Without cascade=true: Delete only unreferenced upload metadata scoped to this lab. Files referenced by materials, submissions (including student ZIP originals), or evidence are protected with 409 and actual reference counts in details.dependencies. Wrong-lab or missing IDs return 404. Files are immutable and have no revision precondition. Blob bytes are never removed, including shared content; associations and assessment history are never cascaded. After 204, verify removal with the existing global GET /api/v1/files/{file_id}, which returns 404.' + DELETE_CONFIRMATION_DESCRIPTION)
+    def delete_unused_file(lab_id: str, file_id: str, cascade: Cascade = False, confirmation_token: ConfirmationToken = None):
+        catalog.delete_file(lab_id, file_id, cascade=cascade, confirmation_token=confirmation_token)
+
+    @api.get('/labs/{lab_id}/files/{file_id}/deletion-impact', response_model=s.DeletionImpact, description=IMPACT_CONFIRMATION_DESCRIPTION)
+    def file_deletion_impact(lab_id: str, file_id: str):
+        return catalog.deletion_impact('files', file_id, lab_id)
 
     @api.get('/files/{file_id}', response_model=s.File)
     def get_file(file_id: str):
@@ -324,9 +367,13 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
     def patch_material(lab_id: str, material_id: str, body: s.MaterialPatch):
         return catalog.patch_record('materials', lab_id, material_id, body)
 
-    @api.delete('/labs/{lab_id}/materials/{material_id}', status_code=204)
-    def delete_material(lab_id: str, material_id: str):
-        catalog.delete('materials', material_id, lab_id)
+    @api.delete('/labs/{lab_id}/materials/{material_id}', status_code=204, description='Without cascade=true delete only the material record. Confirmed deletion also removes attached file metadata only if globally unreferenced after the plan.' + DELETE_CONFIRMATION_DESCRIPTION)
+    def delete_material(lab_id: str, material_id: str, revision: DeleteRevision = None, cascade: Cascade = False, confirmation_token: ConfirmationToken = None):
+        catalog.delete('materials', material_id, lab_id, revision=revision, cascade=cascade, confirmation_token=confirmation_token)
+
+    @api.get('/labs/{lab_id}/materials/{material_id}/deletion-impact', response_model=s.DeletionImpact, description=IMPACT_CONFIRMATION_DESCRIPTION)
+    def material_deletion_impact(lab_id: str, material_id: str):
+        return catalog.deletion_impact('materials', material_id, lab_id)
 
     @api.get('/labs/{lab_id}/teams/{team_id}/submissions', response_model=s.Page[s.Submission])
     def list_submissions(lab_id: str, team_id: str, limit: Limit = 50, offset: Offset = 0):
@@ -339,6 +386,14 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
     @api.get('/submissions/{submission_id}', response_model=s.Submission)
     def get_submission(submission_id: str):
         return catalog.read('submissions', submission_id)
+
+    @api.get('/labs/{lab_id}/teams/{team_id}/submissions/{submission_id}/deletion-impact', response_model=s.DeletionImpact, description=IMPACT_CONFIRMATION_DESCRIPTION)
+    def submission_deletion_impact(lab_id: str, team_id: str, submission_id: str):
+        return catalog.deletion_impact('submissions', submission_id, lab_id, team_id)
+
+    @api.delete('/labs/{lab_id}/teams/{team_id}/submissions/{submission_id}', status_code=204, description='Without cascade=true retain restrictive dependencies. Confirmed deletion removes linked evidence and assessments with current or historical submission_id links, all their history, and original file metadata only if globally unreferenced. Submissions are immutable and have no revision parameter. Verify absence using global GET submissions/{submission_id}.' + DELETE_CONFIRMATION_DESCRIPTION)
+    def delete_submission(lab_id: str, team_id: str, submission_id: str, cascade: Cascade = False, confirmation_token: ConfirmationToken = None):
+        catalog.delete('submissions', submission_id, lab_id, team_id=team_id, cascade=cascade, confirmation_token=confirmation_token)
 
     @api.get('/submissions/{submission_id}/members', response_model=s.Page[s.ArchiveMember])
     def list_members(submission_id: str, limit: Limit = 50, offset: Offset = 0):
@@ -373,6 +428,14 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
     def put_assessment(lab_id: str, team_id: str, exercise_id: str, body: s.AssessmentPut):
         return catalog.put_assessment(lab_id, team_id, exercise_id, body)
 
+    @api.get('/labs/{lab_id}/teams/{team_id}/assessments/{exercise_id}/deletion-impact', response_model=s.DeletionImpact, description=IMPACT_CONFIRMATION_DESCRIPTION)
+    def assessment_deletion_impact(lab_id: str, team_id: str, exercise_id: str):
+        return catalog.deletion_impact('assessments', exercise_id, lab_id, team_id)
+
+    @api.delete('/labs/{lab_id}/teams/{team_id}/assessments/{exercise_id}', status_code=204, description='Without cascade=true history blocks deletion. Confirmed deletion removes only the actual assessment for this team/exercise and its history; independent evidence survives. Missing assessment DELETE is 404; subsequent GET returns the ungraded default with id=null revision=0 and empty history.' + DELETE_CONFIRMATION_DESCRIPTION)
+    def delete_assessment(lab_id: str, team_id: str, exercise_id: str, revision: DeleteRevision = None, cascade: Cascade = False, confirmation_token: ConfirmationToken = None):
+        catalog.delete('assessments', exercise_id, lab_id, team_id=team_id, revision=revision, cascade=cascade, confirmation_token=confirmation_token)
+
     @api.get('/labs/{lab_id}/teams/{team_id}/assessments/{exercise_id}/history', response_model=s.Page[s.Assessment])
     def assessment_history(lab_id: str, team_id: str, exercise_id: str, limit: Limit = 50, offset: Offset = 0):
         return page(catalog.history(lab_id, team_id, exercise_id), limit, offset)
@@ -393,9 +456,13 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
     def patch_evidence(lab_id: str, team_id: str, evidence_id: str, body: s.EvidencePatch):
         return catalog.patch_record('evidence', lab_id, evidence_id, body, team_id)
 
-    @api.delete('/labs/{lab_id}/teams/{team_id}/evidence/{evidence_id}', status_code=204)
-    def delete_evidence(lab_id: str, team_id: str, evidence_id: str):
-        catalog.delete_evidence(lab_id, team_id, evidence_id)
+    @api.delete('/labs/{lab_id}/teams/{team_id}/evidence/{evidence_id}', status_code=204, description='Without cascade=true delete only selected evidence. Confirmed deletion also removes its attached file metadata only if globally unreferenced; submissions and independent assessments survive.' + DELETE_CONFIRMATION_DESCRIPTION)
+    def delete_evidence(lab_id: str, team_id: str, evidence_id: str, revision: DeleteRevision = None, cascade: Cascade = False, confirmation_token: ConfirmationToken = None):
+        catalog.delete_evidence(lab_id, team_id, evidence_id, revision=revision, cascade=cascade, confirmation_token=confirmation_token)
+
+    @api.get('/labs/{lab_id}/teams/{team_id}/evidence/{evidence_id}/deletion-impact', response_model=s.DeletionImpact, description=IMPACT_CONFIRMATION_DESCRIPTION)
+    def evidence_deletion_impact(lab_id: str, team_id: str, evidence_id: str):
+        return catalog.deletion_impact('evidence', evidence_id, lab_id, team_id)
 
     @api.get('/labs/{lab_id}/overview', response_model=s.Overview)
     def overview(lab_id: str, limit: Limit = 50, offset: Offset = 0):

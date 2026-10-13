@@ -4,6 +4,8 @@ import { compareDecimal, sumDecimals } from './decimal';
 import { Empty, Field, LoadState, More, SaveForm, usePaged, useResource } from './ui';
 import type { Assessment, Exercise, Submission } from './types';
 import EvidenceList from './Evidence';
+import Removal from './Removal';
+import { OperationContext, useOperations } from './OperationContext';
 const criterionScore = (scores: Assessment['criterion_scores'], key: string) =>
   Object.hasOwn(scores, key) ? scores[key] : undefined;
 export function validateAssessment(d: Assessment, x: Exercise) {
@@ -309,51 +311,71 @@ export default function AssessmentView({
   exercise: Exercise;
   submissions: Submission[];
 }) {
+  const operations = useOperations();
   const [exercise, setExercise] = useState(loadedExercise);
   const path = `${labPath(labId)}/teams/${id(teamId)}/assessments/${id(exercise.id)}`;
   const assessment = useResource<Assessment>(path);
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [editorVersion, setEditorVersion] = useState(0);
   return (
-    <>
-      <section className="exercise-brief">
-        <div className="section-heading">
-          <h2>{exercise.title}</h2>
-          <span className="points">
-            {exercise.max_points} <small>μονάδες</small>
-          </span>
-        </div>
-        <p className="preserve muted">{exercise.description}</p>
-        <div className="notice">
-          <h3>Οδηγίες βαθμολόγησης</h3>
-          <p className="preserve">
-            {exercise.grading_instructions || 'Δεν έχουν οριστεί οδηγίες.'}
-          </p>
-        </div>
-        {exercise.archived && <p className="notice warn">Αρχειοθετημένη άσκηση</p>}
-      </section>
-      <LoadState {...assessment} retry={assessment.reload}>
-        {assessment.value && (
-          <AssessmentEditor
-            path={path}
-            initial={assessment.value}
-            exercise={exercise}
-            submissions={submissions}
-            exercisePath={`${labPath(labId)}/exercises/${id(exercise.id)}`}
-            onExerciseReload={setExercise}
-            onSaved={(saved) => {
-              assessment.setValue(saved);
-              setHistoryVersion((v) => v + 1);
-            }}
-          />
+    <OperationContext.Provider value={operations}>
+      <fieldset disabled={operations.pending} className="form-fields">
+        <section className="exercise-brief">
+          <div className="section-heading">
+            <h2>{exercise.title}</h2>
+            <span className="points">
+              {exercise.max_points} <small>μονάδες</small>
+            </span>
+          </div>
+          <p className="preserve muted">{exercise.description}</p>
+          <div className="notice">
+            <h3>Οδηγίες βαθμολόγησης</h3>
+            <p className="preserve">
+              {exercise.grading_instructions || 'Δεν έχουν οριστεί οδηγίες.'}
+            </p>
+          </div>
+          {exercise.archived && <p className="notice warn">Αρχειοθετημένη άσκηση</p>}
+        </section>
+        {assessment.value?.id != null && (
+          <div className="actions item-actions assessment-actions">
+            <Removal
+              path={path}
+              revision={assessment.value.revision}
+              title={exercise.title}
+              kind="αξιολόγησης"
+              onRemoved={(empty) => {
+                assessment.setValue(empty);
+                setHistoryVersion((v) => v + 1);
+                setEditorVersion((v) => v + 1);
+              }}
+            />
+          </div>
         )}
-      </LoadState>
-      <History key={historyVersion} path={path} />
-      <EvidenceList
-        labId={labId}
-        teamId={teamId}
-        exerciseId={exercise.id}
-        submissions={submissions}
-      />
-    </>
+        <LoadState {...assessment} retry={assessment.reload}>
+          {assessment.value && (
+            <AssessmentEditor
+              key={editorVersion}
+              path={path}
+              initial={assessment.value}
+              exercise={exercise}
+              submissions={submissions}
+              exercisePath={`${labPath(labId)}/exercises/${id(exercise.id)}`}
+              onExerciseReload={setExercise}
+              onSaved={(saved) => {
+                assessment.setValue(saved);
+                setHistoryVersion((v) => v + 1);
+              }}
+            />
+          )}
+        </LoadState>
+        <History key={historyVersion} path={path} />
+        <EvidenceList
+          labId={labId}
+          teamId={teamId}
+          exerciseId={exercise.id}
+          submissions={submissions}
+        />
+      </fieldset>
+    </OperationContext.Provider>
   );
 }
