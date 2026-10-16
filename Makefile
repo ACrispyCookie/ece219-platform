@@ -3,6 +3,8 @@ NPM ?= npm
 HOST ?= 127.0.0.1
 PORT ?= 3457
 DATA_DIR ?= workspace/catalog
+ALLOWED_HOSTS ?= $(HOST):$(PORT)
+TRUSTED_PROXIES ?=
 
 .PHONY: help test test-backend test-frontend check build serve
 help:
@@ -30,4 +32,4 @@ build:
 	$(NPM) --prefix frontend run build
 
 serve:
-	PYTHONPATH=backend $(PYTHON) -m lab_catalog serve --data-dir $(DATA_DIR) --host $(HOST) --port $(PORT) --allowed-host $(HOST):$(PORT) --frontend-dir frontend/dist
+	PYTHONPATH=backend $(PYTHON) -m lab_catalog serve --data-dir $(DATA_DIR) --host $(HOST) --port $(PORT) $(foreach authority,$(ALLOWED_HOSTS),--allowed-host $(authority)) $(foreach proxy,$(TRUSTED_PROXIES),--trusted-proxy $(proxy)) --frontend-dir frontend/dist

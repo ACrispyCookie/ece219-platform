@@ -14,9 +14,27 @@ The CLI is also available directly:
   --frontend-dir frontend/dist
 ```
 
-Repeat `--allowed-host` only for actual additional advertised authorities. A wildcard bind address requires an explicit advertised authority; wildcard Host allowlists are not accepted. The CLI disables forwarded-proxy-header trust and access logging. It does not print the operator token.
+Repeat `--allowed-host` only for actual additional advertised authorities. A wildcard bind address requires an explicit advertised authority; wildcard Host allowlists are not accepted. The CLI disables forwarded-proxy-header trust by default and always disables access logging. It does not print the operator token.
 
 The token file is `operator-token` inside the data directory, mode `0600`. Bearer requests and browser sessions grant access to the same single-operator catalog. Browser cookies expire after eight hours and use HttpOnly/SameSiteStrict; cookie-authenticated mutations require a matching Origin. Store the token securely and use HTTPS or a VPN for untrusted network paths. There are no user accounts, per-team permissions or automatic token-rotation endpoint.
+
+The current deployment runs as the transient user service `ece219-platform.service`, with the repository as its working directory, the explicit LAN/proxy arguments below and restart-on-failure. This keeps the server independent of an agent task's lifetime. Inspect it with `systemctl --user status ece219-platform.service` and `journalctl --user -u ece219-platform.service`; stop it with `systemctl --user stop ece219-platform.service`. Restart after rebuilding so the static-asset allowlist is regenerated for the new hashed filenames. This transient deployment is not a boot-enabled service installation; after a reboot, launch it again or install a separately managed persistent unit.
+
+## Reverse-proxy access
+
+The current proxy on `192.168.1.2` routes `https://ece219.njason.dev` and `http://ece219.home.arpa` to the catalog on port3457. Preserve the original Host and let the proxy set `X-Forwarded-Proto`; do not rewrite Host to the upstream address.
+
+```bash
+make serve HOST=192.168.1.5 PORT=3457 \
+  ALLOWED_HOSTS='192.168.1.5:3457 ece219.njason.dev ece219.home.arpa' \
+  TRUSTED_PROXIES='192.168.1.2'
+```
+
+`ALLOWED_HOSTS` expands into repeated `--allowed-host` arguments. `TRUSTED_PROXIES` expands into repeated `--trusted-proxy` arguments, which accept literal unicast IPs only, not wildcard/subnet/hostname trust. Only a request arriving from an explicitly trusted proxy may use forwarded scheme/client headers. Forwarded Host is not used to bypass the exact Host check. Direct clients' spoofed forwarded scheme headers are ignored.
+
+This preserves matching browser Origin validation behind HTTPS termination and produces Secure login cookies on the HTTPS domain. It does not enable CORS, remove authentication or trust every LAN client. Keep the proxy itself configured not to accept arbitrary client-supplied forwarding headers.
+
+The home.arpa route currently uses HTTP on the trusted LAN/VPN. Its HTTPS listener presents an untrusted self-signed proxy certificate; application allowlists cannot repair that trust. Use a properly provisioned local CA/certificate before advertising HTTPS for that name; do not bypass certificate validation.
 
 ## Storage
 
@@ -47,10 +65,15 @@ Deleting the token file and restarting generates a replacement and invalidates e
 - Other request bodies: 1 MiB; JSON nesting: 64 levels.
 - ZIP members: at most 1000, 8 MiB each, 64 MiB total uncompressed; maximum compression ratio 200.
 - ZIP codecs: stored and DEFLATE. Encrypted, multi-disk and ZIP64 submissions remain preserved but blocked for member inspection.
-- Text preview: 1 MiB. Binary preview data uses base64 rather than invented text.
+- API text preview: 1 MiB; binary content in that JSON endpoint uses base64 rather than invented text.
+- Browser preview fetches: 1 MiB for text and 16 MiB for PDF/raster images, checking both declared and actual streamed size. Archive-member limits remain independently enforced by the API.
+- Raster preview: PNG, JPEG, GIF and WebP container/frame dimensions are checked before creating a browser image blob; at most 10,000,000 pixels per canvas/frame and 16,384 pixels per axis. Malformed, unsupported or oversized headers fall back to download. This is not a guarantee of total browser-process memory use.
+- PDF canvas: one page at a time, at most 10,000,000 pixels and 16,384 pixels per axis; 25–300% zoom. Active annotations, forms and document scripts are not exposed.
 - Point values: decimal strings, nonnegative, at most six fractional digits and at most 1,000,000,000 per exercise/criterion/score.
 
 The API serves originals and safe member downloads as attachments with an inert MIME type, nosniff and sandbox CSP. It does not execute files or fetch evidence links. Archive inspection is bounded and read-only; blocking inspection does not remove original bytes.
+
+Browser previews do not require exposing the private blob directory or weakening attachment headers. PDF viewing uses the reader and worker shipped in the frontend build; serve the complete built asset directory, not just the main JavaScript file. If a preview cannot load, check the authenticated file request and the built worker asset separately. Keep authentication, Host/Origin checks and inert download headers intact; the original download remains available when safe preview is unsupported.
 
 ## Diagnosing failures
 

@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, download, id, labPath } from './api';
-import { Empty, Field, LoadState, More, useDirty, useResource } from './ui';
+import {
+  Empty,
+  Field,
+  LoadState,
+  More,
+  archiveStatus,
+  fileSize,
+  greekDate,
+  useDirty,
+  useResource,
+} from './ui';
+import { FilePreviewButton } from './FilePreview';
 import type { ArchiveMember, Page, Submission } from './types';
 import Removal from './Removal';
 import { OperationContext, useOperations } from './OperationContext';
@@ -21,9 +32,8 @@ function Inventory({ submissionId }: { submissionId: string }) {
   const members = [...entries, ...extra];
   const total = value && !Array.isArray(value) && 'total' in value ? value.total : members.length;
   return (
-    <section className="panel">
+    <section className="panel submission-inventory">
       <h3>Περιεχόμενα επιλεγμένης παράδοσης</h3>
-      <p className="mono muted">{submissionId}</p>
       <LoadState {...submission} retry={submission.reload}>
         {submission.value && (
           <>
@@ -31,9 +41,9 @@ function Inventory({ submissionId }: { submissionId: string }) {
               <a className="button" download href={download(submission.value.file_id)}>
                 Λήψη ZIP · {submission.value.filename}
               </a>
-              <span className="badge">{submission.value.archive_status}</span>
+              <span className="badge">{archiveStatus(submission.value.archive_status)}</span>
             </div>
-            <p className="small mono muted">SHA-256: {submission.value.sha256}</p>
+
             {submission.value.archive_errors?.length > 0 && (
               <div className="notice error">
                 <h4>Προβλήματα αρχείου</h4>
@@ -51,19 +61,7 @@ function Inventory({ submissionId }: { submissionId: string }) {
             {members.map((m, index) => (
               <li key={`${m.path}-${index}`}>
                 <span>
-                  {m.is_dir ||
-                  m.is_directory ||
-                  m.status === 'blocked' ||
-                  submission.value?.archive_status === 'blocked' ? (
-                    <span>{m.path}</span>
-                  ) : (
-                    <a
-                      download
-                      href={`/api/v1/submissions/${id(submissionId)}/members/content?path=${encodeURIComponent(m.path)}`}
-                    >
-                      {m.path}
-                    </a>
-                  )}
+                  <span>{m.path}</span>
                   {Array.isArray(m.errors) && m.errors.length > 0 && (
                     <div className="small error">
                       {m.errors.map((error, index) => (
@@ -72,7 +70,34 @@ function Inventory({ submissionId }: { submissionId: string }) {
                     </div>
                   )}
                 </span>
-                <span className="muted small">{m.size ?? '—'} bytes</span>
+                <span className="member-actions">
+                  <span
+                    className="muted small"
+                    title={m.size === undefined ? undefined : `${m.size} bytes`}
+                  >
+                    {fileSize(m.size)}
+                  </span>
+                  {!m.is_dir &&
+                    !m.is_directory &&
+                    m.status !== 'blocked' &&
+                    submission.value &&
+                    submission.value.archive_status !== 'blocked' && (
+                      <>
+                        <FilePreviewButton
+                          filename={m.path}
+                          url={`/api/v1/submissions/${id(submissionId)}/members/content?path=${encodeURIComponent(m.path)}`}
+                          size={m.size}
+                        />
+                        <a
+                          className="button"
+                          download
+                          href={`/api/v1/submissions/${id(submissionId)}/members/content?path=${encodeURIComponent(m.path)}`}
+                        >
+                          Λήψη
+                        </a>
+                      </>
+                    )}
+                </span>
               </li>
             ))}
           </ul>
@@ -98,7 +123,8 @@ function Inventory({ submissionId }: { submissionId: string }) {
         {error && <p role="alert">{error}</p>}
       </LoadState>
       <p className="small muted">
-        Τα αρχεία παρέχονται μόνο για λήψη. Δεν εκτελείται κώδικας φοιτητών.
+        Προεπισκόπηση υποστηριζόμενων αρχείων ή λήψη του πρωτοτύπου. Δεν εκτελείται κώδικας
+        φοιτητών.
       </p>
     </section>
   );
@@ -223,22 +249,38 @@ export default function Submissions({
                 <article className={selected === s.id ? 'version selected' : 'version'} key={s.id}>
                   <div>
                     <h3>{s.filename}</h3>
-                    <p className="small muted">{s.created_at}</p>
-                    <p className="mono small">{s.id}</p>
-                    <p className="small mono muted">SHA-256: {s.sha256}</p>
-                    <span className="badge">{s.archive_status}</span>
+                    <p className="small muted">
+                      {greekDate(s.created_at)} · Έκδοση {s.id.slice(0, 8)}
+                    </p>
+                    <span className="badge">{archiveStatus(s.archive_status)}</span>
+                    <details className="technical-metadata">
+                      <summary>Μεταδεδομένα παράδοσης</summary>
+                      <dl>
+                        <dt>ID</dt>
+                        <dd className="mono">{s.id}</dd>
+                        <dt>SHA-256</dt>
+                        <dd className="mono">{s.sha256}</dd>
+                        <dt>Δημιουργήθηκε</dt>
+                        <dd>{s.created_at}</dd>
+                        <dt>Κατάσταση</dt>
+                        <dd>{s.archive_status}</dd>
+                      </dl>
+                    </details>
                     {s.archive_errors?.length > 0 && (
                       <p className="warn">Προβλήματα αρχείου · {s.archive_errors.length}</p>
                     )}
                   </div>
                   <div className="actions item-actions">
                     <button
-                      aria-label={`Επιλογή παράδοσης ${s.id}`}
+                      aria-label={`${selected === s.id ? 'Απόκρυψη αρχείων' : 'Προβολή αρχείων'} · ${s.filename} · ${s.id.slice(0, 8)}`}
+                      aria-expanded={selected === s.id}
+                      aria-controls={`inventory-${s.id}`}
                       onClick={() => {
-                        if (!operations.locked.current) setSelected(s.id);
+                        if (!operations.locked.current)
+                          setSelected((current) => (current === s.id ? undefined : s.id));
                       }}
                     >
-                      {selected === s.id ? 'Επιλεγμένη' : 'Προβολή περιεχομένων'}
+                      {selected === s.id ? 'Απόκρυψη αρχείων' : 'Προβολή αρχείων'}
                     </button>
                     <Removal
                       path={`${labPath(labId)}/teams/${id(teamId)}/submissions/${id(s.id)}`}
@@ -251,6 +293,11 @@ export default function Submissions({
                       }}
                     />
                   </div>
+                  {selected === s.id && (
+                    <div id={`inventory-${s.id}`} className="version-inventory">
+                      <Inventory key={s.id} submissionId={s.id} />
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
@@ -258,15 +305,11 @@ export default function Submissions({
           {!pending && (
             <More count={items.length} total={total} busy={loadingMore} onMore={onMore} />
           )}
-          {selected ? (
-            <Inventory key={selected} submissionId={selected} />
-          ) : (
-            items.length > 0 && (
-              <p className="notice">
-                Επιλέξτε ρητά μία παράδοση για προβολή περιεχομένων. Δεν επιλέγεται αυτόματα η
-                νεότερη ή η καλύτερη.
-              </p>
-            )
+          {!selected && items.length > 0 && (
+            <p className="notice">
+              Επιλέξτε ρητά μία παράδοση για προβολή περιεχομένων. Δεν επιλέγεται αυτόματα η νεότερη
+              ή η καλύτερη.
+            </p>
           )}
         </section>
       </fieldset>

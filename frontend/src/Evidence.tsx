@@ -1,9 +1,21 @@
-import { useContext, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { api, id, json, labPath } from './api';
 import { FileMetadata, findSaved, safeURL, uploadFile } from './files';
 import Removal from './Removal';
 import { OperationContext, useOperations } from './OperationContext';
-import { DirtyContext, Empty, Field, LoadState, More, useDirty, usePaged } from './ui';
+import {
+  DirtyContext,
+  Empty,
+  Field,
+  LoadState,
+  More,
+  greekDate,
+  sourceLabel,
+  submissionLabel,
+  useDirty,
+  useEditRequest,
+  usePaged,
+} from './ui';
 import type { Evidence, StoredFile, Submission } from './types';
 import { EvidenceCorrection } from './CatalogCorrections';
 import { parseResultJSON, stringifyJSON } from './resultJSON';
@@ -128,7 +140,7 @@ function EvidenceForm({
                 <option value="">Χωρίς σύνδεση με παράδοση</option>
                 {submissions.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.filename} · {s.id}
+                    {submissionLabel(s)}
                   </option>
                 ))}
               </select>
@@ -209,14 +221,28 @@ export default function EvidenceList({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Evidence>();
   const [editVersion, setEditVersion] = useState(0);
-  const [loadingEdit, setLoadingEdit] = useState<string>();
+  const editRequest = useEditRequest(path, operations);
+  const loadingEdit = editRequest.loading;
   const [error, setError] = useState('');
+  const [editErrorId, setEditErrorId] = useState<string>();
   const [success, setSuccess] = useState('');
 
   const context = useContext(DirtyContext);
+  useEffect(() => {
+    setEditing(undefined);
+    setOpen(false);
+    setError('');
+    setSuccess('');
+  }, [path]);
   return (
     <OperationContext.Provider value={operations}>
-      <fieldset disabled={operations.pending} className="form-fields">
+      <fieldset
+        disabled={operations.pending || !!loadingEdit}
+        className="form-fields"
+        onChangeCapture={(e) => {
+          if (editRequest.pending.current) e.stopPropagation();
+        }}
+      >
         <section>
           <div className="section-heading">
             <div>
@@ -226,8 +252,9 @@ export default function EvidenceList({
               </p>
             </div>
             <button
+              disabled={!!loadingEdit}
               onClick={() => {
-                if (context.guard()) {
+                if (!editRequest.blocked() && context.guard()) {
                   setEditing(undefined);
                   setOpen(true);
                   setSuccess('');
@@ -249,34 +276,30 @@ export default function EvidenceList({
                 list.reload();
               }}
               onCancel={() => {
-                if (context.guard()) setOpen(false);
+                if (!editRequest.blocked() && context.guard()) setOpen(false);
               }}
             />
           )}
-          {editing && (
-            <EvidenceCorrection
-              key={`${editing.id}-${editVersion}`}
-              labId={labId}
-              teamId={teamId}
-              initial={editing}
-              submissions={submissions}
-              onSaved={list.reload}
-              onCancel={() => {
-                if (context.guard()) setEditing(undefined);
-              }}
-            />
-          )}
+
           {success && (
             <p className="success" role="status">
               {success}
             </p>
           )}
-          {error && (
+          {list.value && list.error && (
             <p className="notice error" role="alert">
-              {error}
+              {list.error.message}{' '}
+              <button type="button" onClick={list.reload}>
+                Επανάληψη ανανέωσης
+              </button>
             </p>
           )}
-          <LoadState {...list} retry={list.reload}>
+          <LoadState
+            {...list}
+            error={list.value ? undefined : list.error}
+            loading={list.loading && !list.value}
+            retry={list.reload}
+          >
             {!list.items.length ? (
               <Empty>Δεν υπάρχουν τεκμήρια για αυτή την άσκηση.</Empty>
             ) : (
@@ -297,12 +320,14 @@ export default function EvidenceList({
                       </span>
                     </div>
                     <p className="small muted">
-                      {e.created_at} · {e.source} ·{' '}
+                      {greekDate(e.created_at)} · {sourceLabel(e.source)} ·{' '}
                       {e.submission_id
-                        ? `Παράδοση ${e.submission_id}`
+                        ? submissions.find((s) => s.id === e.submission_id)
+                          ? submissionLabel(submissions.find((s) => s.id === e.submission_id)!)
+                          : `Παράδοση ${e.submission_id.slice(0, 8)}`
                         : 'Χωρίς σύνδεση με παράδοση'}
                     </p>
-                    {e.kind === 'text' && <p className="preserve">{e.text}</p>}
+                    {e.text && <p className="preserve">{e.text}</p>}
                     {e.kind === 'link' &&
                       e.url &&
                       (safeURL(e.url) ? (
@@ -315,34 +340,58 @@ export default function EvidenceList({
                     {e.kind === 'file' && e.file_id && <FileMetadata fileId={e.file_id} />}{' '}
                     {e.kind === 'result' && (
                       <>
-                        <pre>{stringifyJSON(e.data, 2)}</pre>
+                        <details className="result-data">
+                          <summary>Δεδομένα αποτελέσματος (JSON)</summary>
+                          <pre>{stringifyJSON(e.data, 2)}</pre>
+                        </details>
                         <p className="small muted">Αποτέλεσμα τεκμηρίου · όχι βαθμός</p>
                       </>
                     )}
+                    <details className="technical-metadata">
+                      <summary>Μεταδεδομένα τεκμηρίου</summary>
+                      <dl>
+                        <dt>ID</dt>
+                        <dd className="mono">{e.id}</dd>
+                        <dt>Έκδοση</dt>
+                        <dd>{e.revision}</dd>
+                        <dt>Προέλευση</dt>
+                        <dd>{e.source}</dd>
+                        <dt>Δημιουργήθηκε</dt>
+                        <dd>{e.created_at}</dd>
+                        {e.submission_id && (
+                          <>
+                            <dt>Παράδοση</dt>
+                            <dd className="mono">{e.submission_id}</dd>
+                          </>
+                        )}
+                      </dl>
+                    </details>
                     <div className="actions item-actions">
                       <button
                         disabled={!!loadingEdit}
                         onClick={async () => {
-                          if (!context.guard()) return;
-                          setLoadingEdit(e.id);
+                          if (editRequest.blocked() || !context.guard()) return;
+                          const currentRequest = editRequest.checkpoint();
                           setError('');
+                          setEditErrorId(e.id);
                           setSuccess('');
-                          try {
-                            const current = await api<Evidence>(`${base}/${id(e.id)}`);
-                            if (
-                              current.id !== e.id ||
-                              current.team_id !== teamId ||
-                              current.revision < 1
-                            )
-                              throw new Error('Δεν επιβεβαιώθηκε το τεκμήριο διακομιστή.');
-                            setOpen(false);
-                            setEditing(current);
-                            setEditVersion((v) => v + 1);
-                          } catch (err) {
-                            setError((err as Error).message);
-                          } finally {
-                            setLoadingEdit(undefined);
-                          }
+                          await editRequest.run(
+                            e.id,
+                            async () => {
+                              const current = await api<Evidence>(`${base}/${id(e.id)}`);
+                              if (!currentRequest()) return;
+                              if (
+                                current.id !== e.id ||
+                                current.team_id !== teamId ||
+                                current.revision < 1
+                              )
+                                throw new Error('Δεν επιβεβαιώθηκε το τεκμήριο διακομιστή.');
+                              setOpen(false);
+                              setEditing(current);
+                              setEditVersion((v) => v + 1);
+                            },
+                            (err) => setError(err.message),
+                          );
                         }}
                       >
                         {loadingEdit === e.id ? 'Φόρτωση…' : 'Επεξεργασία τεκμηρίου'}
@@ -359,6 +408,27 @@ export default function EvidenceList({
                         }}
                       />
                     </div>
+                    {error && editErrorId === e.id && (
+                      <p className="notice error" role="alert">
+                        {error}
+                      </p>
+                    )}
+                    {editing?.id === e.id && (
+                      <EvidenceCorrection
+                        key={`${editing.id}-${editVersion}`}
+                        labId={labId}
+                        teamId={teamId}
+                        initial={editing}
+                        submissions={submissions}
+                        onSaved={(saved) => {
+                          setEditing((current) => (current?.id === saved.id ? saved : current));
+                          list.reload();
+                        }}
+                        onCancel={() => {
+                          if (!editRequest.blocked() && context.guard()) setEditing(undefined);
+                        }}
+                      />
+                    )}
                   </article>
                 ))}
               </div>

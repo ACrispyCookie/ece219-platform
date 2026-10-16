@@ -161,6 +161,9 @@ it('conflict notice dismisses by keyboard locally and restores trigger focus', a
   fireEvent.click(deletion());
   await confirmRemoval();
   await screen.findByRole('alert');
+  // Finish the prior operation's unlock/focus effect before simulating another
+  // keyboard interaction; finding the notice alone observes only its commit.
+  await waitFor(() => expect(deletion()).toHaveFocus());
   const notice = screen.getByRole('alert');
   expect(notice).toHaveClass('removal-notice');
   expect(close()).toHaveAttribute('type', 'button');
@@ -177,6 +180,9 @@ it('sibling preview/verification synchronously excludes dismissal and does not s
   fireEvent.click(deletion());
   await confirmRemoval();
   await screen.findByRole('alert');
+  // Finish the prior operation's unlock/focus effect before simulating another
+  // keyboard interaction; finding the notice alone observes only its commit.
+  await waitFor(() => expect(deletion()).toHaveFocus());
   let release!: () => void;
   handler = async (target, method) => {
     if (target === '/api/v1/labs/other')

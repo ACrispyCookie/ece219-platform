@@ -87,9 +87,15 @@ Cross-lab exercise/file references and another team's submission/file are reject
 
 File metadata is available at `/files/{file_id}`; originals are downloaded from `/files/{file_id}/download`. Responses are inert attachments with size/hash validation. Private filesystem paths are not part of the contract.
 
+### Browser viewing and download safety
+
+The frontend preview uses the same authenticated read endpoints as downloads; it does not introduce an unauthenticated inline-file route or change download headers. It renders supported PDF bytes with its bundled reader, displays supported raster images, and escapes text/source/Markdown/JSON. Uploaded HTML, SVG and scripts are never executed or embedded as active application-origin pages. Unsupported, oversized and failed previews offer the original download instead. Closing or changing a preview cancels obsolete work and releases browser resources.
+
+Submission-content expansion is local interface state, not an assessment association. Opening or closing it makes no catalog write. Each version retains its explicit ID; grading and evidence continue to cite a separately chosen submission ID. Technical IDs and hashes remain inspectable even when collapsed in the interface.
+
 GET `/submissions/{submission_id}` reports archive status and diagnostics. GET its `/members` collection for the bounded inventory. Safe original member bytes are downloaded from `/members/content?path=...`; the bounded JSON preview is a separate `/members/text?path=...` operation. Use the exact member path returned by the inventory. Blocked archives retain their original bytes but do not expose unsafe member downloads. ZIP support and size/codec limits are described in [operations](operations.md).
 
-No original or included source file is interpreted or executed. There is no HTTP endpoint to launch graders or agents.
+The server does not interpret or execute uploaded programs or graders. There is no HTTP endpoint to launch graders or agents.
 
 ## Overview, export and deletion
 

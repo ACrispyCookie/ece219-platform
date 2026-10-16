@@ -153,6 +153,93 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
+export function greekDate(value?: string | null) {
+  if (!value) return 'Χωρίς χρονική σήμανση';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString('el-GR', { dateStyle: 'short', timeStyle: 'short' });
+}
+export const sourceLabel = (source: string) =>
+  ({ human: 'Διδάσκων', agent: 'Βοηθός AI', import: 'Εισαγωγή', ai: 'Βοηθός AI' })[source] ||
+  source;
+export const assessmentStatus = (status: string) =>
+  ({ ungraded: 'Χωρίς βαθμό', draft: 'Προσχέδιο', final: 'Οριστική' })[status] || status;
+export const archiveStatus = (status: string) =>
+  ({
+    valid: 'Έτοιμο για προβολή',
+    ok: 'Έτοιμο για προβολή',
+    blocked: 'Αποκλεισμένο αρχείο',
+    pending: 'Έλεγχος σε εξέλιξη',
+  })[status] || status;
+export const fileSize = (size?: number) =>
+  size === undefined
+    ? 'Άγνωστο μέγεθος'
+    : size < 1024
+      ? `${size} bytes`
+      : `${(size / 1024).toLocaleString('el-GR', { maximumFractionDigits: 1 })} KB`;
+export const submissionLabel = (s: { filename: string; id: string; created_at: string }) =>
+  `${s.filename} · ${s.id.slice(0, 8)} · ${greekDate(s.created_at)}`;
+
+// Read-only edit fetches own a save registration: removal cannot race them.
+// Scope epochs reject target ABA and unmount; refs exclude same-batch clicks.
+export function useEditRequest(scope: string, operations: ReturnType<typeof useOperations>) {
+  const owner = useRef(Symbol('edit-fetch'));
+  const target = useRef(scope);
+  const epoch = useRef(0);
+  const mounted = useRef(true);
+  const active = useRef(false);
+  const [loading, setLoading] = useState<string>();
+  if (target.current !== scope) {
+    target.current = scope;
+    epoch.current++;
+  }
+  useEffect(() => {
+    mounted.current = true;
+    setLoading(undefined);
+    active.current = false;
+    operations.releaseSave(owner.current);
+    return () => {
+      mounted.current = false;
+      epoch.current++;
+      active.current = false;
+      operations.releaseSave(owner.current);
+    };
+  }, [scope]);
+  return {
+    loading,
+    pending: active,
+    blocked: () => active.current || operations.locked.current || operations.saves.current.size > 0,
+    async run(key: string, read: () => Promise<void>, error: (e: Error) => void) {
+      if (
+        active.current ||
+        operations.locked.current ||
+        operations.saves.current.size ||
+        !operations.acquireSave(owner.current)
+      )
+        return;
+      active.current = true;
+      const generation = epoch.current;
+      const current = () => mounted.current && generation === epoch.current;
+      setLoading(key);
+      try {
+        await read();
+      } catch (e) {
+        if (current()) error(e as Error);
+      } finally {
+        if (current()) {
+          active.current = false;
+          setLoading(undefined);
+          operations.releaseSave(owner.current);
+        }
+      }
+    },
+    checkpoint() {
+      const generation = epoch.current;
+      return () => mounted.current && generation === epoch.current;
+    },
+  };
+}
 export function SaveForm<T extends object>({
   initial,
   save,
@@ -165,6 +252,8 @@ export function SaveForm<T extends object>({
   compareRead,
   onReload,
   renderServer,
+  headerActions,
+  focusOnMount = false,
 }: {
   initial: T;
   save: (draft: T) => Promise<unknown>;
@@ -177,7 +266,20 @@ export function SaveForm<T extends object>({
   compareRead?: () => Promise<T>;
   onReload?: (saved: T) => void;
   renderServer?: (saved: T) => ReactNode;
+  headerActions?: ReactNode;
+  focusOnMount?: boolean;
 }) {
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!focusOnMount) return;
+    const input = section.current?.querySelector<HTMLElement>(
+      'input:not([type="file"]),textarea,select',
+    );
+    input?.focus({ preventScroll: true });
+    // Native focus scrolling may leave a new editor partly below the viewport,
+    // especially when opened from an action near the end of a long mobile card.
+    input?.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
+  }, []);
   const [draft, setDraft] = useState<T>(initial);
   const [baseline, setBaseline] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -243,8 +345,11 @@ export function SaveForm<T extends object>({
     }
   }
   return (
-    <section className="panel">
-      <h2>{title}</h2>
+    <section className="panel" ref={section}>
+      <header className="section-heading form-heading">
+        <h2>{title}</h2>
+        {headerActions && <div className="actions item-actions">{headerActions}</div>}
+      </header>
       <form
         onSubmit={(e) => {
           e.preventDefault();

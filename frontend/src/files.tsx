@@ -1,5 +1,6 @@
-import { api, download, id, json, labPath } from './api';
-import { LoadState, useResource } from './ui';
+import { api, download, id, labPath } from './api';
+import { LoadState, fileSize, useResource } from './ui';
+import { FilePreviewButton } from './FilePreview';
 import type { Page, StoredFile } from './types';
 export async function uploadFile(labId: string, file: File, teamId?: string) {
   const form = new FormData();
@@ -40,11 +41,19 @@ export function FileMetadata({ fileId }: { fileId: string }) {
     <LoadState {...file} retry={file.reload}>
       {file.value && (
         <div className="file-metadata">
-          <a href={download(fileId)} download>
-            {file.value.filename}
-          </a>
+          <strong className="file-name">{file.value.filename}</strong>
           <div className="small muted">
-            {file.value.size} bytes · {file.value.media_type}
+            {fileSize(file.value.size)} · {file.value.media_type}
+          </div>
+          <div className="actions file-actions">
+            <FilePreviewButton
+              filename={file.value.filename}
+              url={download(fileId)}
+              size={file.value.size}
+            />
+            <a className="button" href={download(fileId)} download>
+              Λήψη
+            </a>
           </div>
           <details>
             <summary>Μεταδεδομένα αρχείου</summary>
@@ -55,6 +64,8 @@ export function FileMetadata({ fileId }: { fileId: string }) {
               <dd className="mono">{file.value.sha256}</dd>
               <dt>Αποθηκεύτηκε</dt>
               <dd>{file.value.created_at}</dd>
+              <dt>Μέγεθος</dt>
+              <dd>{file.value.size} bytes</dd>
             </dl>
           </details>
         </div>

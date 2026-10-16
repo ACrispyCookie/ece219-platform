@@ -238,7 +238,11 @@ export default function Removal({
         aria-label={`Διαγραφή ${kind} ${title}`}
         title={`Διαγραφή ${kind} ${title}`}
       >
-        {operations.pending ? 'Διαγραφή…' : 'Διαγραφή'}
+        {operations.pending
+          ? 'Διαγραφή…'
+          : kind === 'αξιολόγησης'
+            ? 'Διαγραφή αξιολόγησης'
+            : 'Διαγραφή'}
       </button>
       {error && (
         <section className="notice warn removal-notice" role="alert">

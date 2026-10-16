@@ -496,8 +496,7 @@ it('corrects evidence exercise association, kind and source explicitly while kee
   await user.selectOptions(screen.getByLabelText('Σχετική άσκηση'), other.id);
   await user.selectOptions(screen.getByLabelText('Είδος τεκμηρίου'), 'link');
   await user.type(screen.getByLabelText('Σύνδεσμος'), 'https://example.invalid/corrected');
-  await user.clear(screen.getByLabelText('Προέλευση τεκμηρίου'));
-  await user.type(screen.getByLabelText('Προέλευση τεκμηρίου'), 'human');
+  await user.selectOptions(screen.getByLabelText('Προέλευση τεκμηρίου'), 'human');
   await user.click(screen.getByRole('button', { name: 'Αποθήκευση' }));
   await screen.findByText('Αποθηκεύτηκε και επιβεβαιώθηκε.');
   expect(sent).toMatchObject({

@@ -19,6 +19,7 @@ Greek React UI / authenticated API client / future MCP adapter
 - `deletion.py` owns the deterministic scoped removal plan, distinct impact counts and full-state confirmation fingerprint. Preview and execution share the same planner; execution checks the fingerprint inside the write transaction and removes rows in foreign-key-safe order.
 - `files.py` owns immutable SHA-256-addressed blobs, integrity validation and bounded read-only ZIP inspection. Uploaded code is never imported or executed.
 - `frontend/src/` owns interaction and presentation. State is authoritative on the server; writes are confirmed by reads. The browser's in-progress forms are not the assessment database.
+- File preview is a client presentation boundary over authenticated inert downloads, not a new publication or execution service. The browser renders supported PDF bytes with a bundled reader, escapes source text and retains download fallbacks. Uploaded documents never become trusted application HTML; viewing and collapsing a submission do not mutate assessment associations.
 
 No HTTP handler starts a grader, student program, agent or subprocess. The executable CLI only starts the catalog server.
 

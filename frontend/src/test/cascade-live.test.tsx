@@ -232,9 +232,7 @@ it.each(['material', 'evidence', 'submission', 'assessment', 'file'] as const)(
     const button = await screen.findByRole('button', { name: label });
     expect(button.closest('.item-actions')).not.toBeNull();
     if (kind === 'submission') {
-      await userEvent.click(
-        screen.getByRole('button', { name: 'Επιλογή παράδοσης ' + f.submission.id }),
-      );
+      await userEvent.click(screen.getByRole('button', { name: /Προβολή αρχείων/ }));
       await screen.findByRole('heading', { name: 'Περιεχόμενα επιλεγμένης παράδοσης' });
     }
     if (kind === 'material' || kind === 'evidence') {

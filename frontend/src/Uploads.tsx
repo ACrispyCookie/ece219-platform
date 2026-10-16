@@ -1,5 +1,6 @@
 import { download, id, labPath } from './api';
-import { Empty, LoadState, More, usePaged } from './ui';
+import { Empty, LoadState, More, fileSize, greekDate, usePaged } from './ui';
+import { FilePreviewButton } from './FilePreview';
 import type { StoredFile } from './types';
 import Removal from './Removal';
 
@@ -34,10 +35,15 @@ export default function Uploads({
                 <div className="upload-info">
                   <strong>{file.filename}</strong>
                   <span className="small muted">
-                    {file.size} bytes · {file.created_at}
+                    {fileSize(file.size)} · {greekDate(file.created_at)}
                   </span>
                 </div>
                 <div className="actions item-actions">
+                  <FilePreviewButton
+                    filename={file.filename}
+                    url={download(file.id)}
+                    size={file.size}
+                  />
                   <a className="button" href={download(file.id)} download>
                     Λήψη
                   </a>

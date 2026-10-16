@@ -232,7 +232,7 @@ function OverviewView({ labId, onTeam }: { labId: string; onTeam: (id: string) =
                               {a?.status === 'final'
                                 ? 'Οριστική'
                                 : a?.status === 'draft'
-                                  ? 'Πρόχειρη'
+                                  ? 'Προσχέδιο'
                                   : 'Χωρίς βαθμό'}
                             </div>
                             {a?.rubric_stale && (

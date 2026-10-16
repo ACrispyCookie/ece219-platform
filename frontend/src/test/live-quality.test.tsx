@@ -1,5 +1,5 @@
 // Synthetic-only real CLI / SQLite / blob regressions, adapted from quality gate.
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, afterAll, beforeAll, expect, it } from 'vitest';
 import '@testing-library/jest-dom/vitest';
@@ -25,9 +25,7 @@ let uploadGate: { arrived: () => void; wait: Promise<void> } | undefined;
 const observations: unknown[] = [];
 beforeAll(async () => {
   const project = resolve(process.cwd(), '..');
-  state = await mkdtemp(
-    resolve(tmpdir(), 'frontend-quality-'),
-  );
+  state = await mkdtemp(resolve(tmpdir(), 'frontend-quality-'));
   const listener = createServer();
   await new Promise<void>((r) => listener.listen(0, '127.0.0.1', r));
   const port = (listener.address() as { port: number }).port;
@@ -152,6 +150,66 @@ async function fixture() {
   const ex = await req(b + '/exercises', 'POST', { title: 'Synthetic exercise', max_points: '1' });
   return { lab, team, ex, b, ep: b + '/teams/' + team.id + '/evidence' };
 }
+it('edits a result human comment in its own card and preserves exact JSON through real PATCH/readback/list refresh', async () => {
+  const f = await fixture();
+  await req(f.ep, 'POST', {
+    exercise_id: f.ex.id,
+    title: 'Earlier evidence',
+    kind: 'text',
+    text: 'Earlier',
+  });
+  const raw = `{"exercise_id":"${f.ex.id}","title":"Last result comment","kind":"result","text":"Human explanation","source":"agent","data":{"counter":9007199254740993}}`;
+  const createdResponse = await fetch('/api/v1' + f.ep, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: raw,
+  });
+  expect(createdResponse.status).toBe(201);
+  const created = await createdResponse.json();
+  render(
+    <EvidenceList labId={f.lab.id} teamId={f.team.id} exerciseId={f.ex.id} submissions={[]} />,
+  );
+  const heading = await screen.findByRole('heading', { name: 'Last result comment' });
+  const card = heading.closest('article')!;
+  expect(within(card).getByText('Human explanation')).toBeVisible();
+  const rawDetails = within(card).getByText('Δεδομένα αποτελέσματος (JSON)').closest('details')!;
+  expect(rawDetails).not.toHaveAttribute('open');
+  expect(rawDetails.querySelector('pre')!.textContent).toContain('9007199254740993');
+  const user = userEvent.setup();
+  await user.click(within(card).getByRole('button', { name: 'Επεξεργασία τεκμηρίου' }));
+  const input = await screen.findByLabelText('Κείμενο τεκμηρίου');
+  expect(card).toContainElement(input);
+  expect(within(card).getByLabelText('Τίτλος τεκμηρίου')).toHaveFocus();
+  await user.clear(input);
+  await user.type(input, 'Human correction');
+  await user.selectOptions(screen.getByLabelText('Προέλευση τεκμηρίου'), 'human');
+  await user.click(within(card).getByRole('button', { name: 'Αποθήκευση' }));
+  await within(card).findByText('Αποθηκεύτηκε και επιβεβαιώθηκε.');
+  await within(card).findByText('Human correction');
+  expect(screen.getByLabelText('Κείμενο τεκμηρίου')).toBe(input);
+  expect(input).toHaveValue('Human correction');
+  const persisted = await (await fetch('/api/v1' + f.ep + '/' + created.id)).text();
+  expect(persisted).toContain('9007199254740993');
+  expect(JSON.parse(persisted).text).toBe('Human correction');
+  expect(JSON.parse(persisted).source).toBe('human');
+  const sent = JSON.parse(calls.filter((c) => c.method === 'PATCH').at(-1)!.body!);
+  expect(sent).not.toHaveProperty('data');
+  expect(sent.text).toBe('Human correction');
+  // A second save can intentionally restore both original values; compare
+  // against the latest verified baseline, not the original mount props.
+  await user.clear(input);
+  await user.type(input, 'Human explanation');
+  await user.selectOptions(screen.getByLabelText('Προέλευση τεκμηρίου'), 'agent');
+  await user.click(within(card).getByRole('button', { name: 'Αποθήκευση' }));
+  await within(card).findByText('Αποθηκεύτηκε και επιβεβαιώθηκε.');
+  const restored = await (await fetch('/api/v1' + f.ep + '/' + created.id)).text();
+  expect(JSON.parse(restored).source).toBe('agent');
+  expect(JSON.parse(restored).text).toBe('Human explanation');
+  expect(restored).toContain('9007199254740993');
+  expect(JSON.parse(calls.filter((c) => c.method === 'PATCH').at(-1)!.body!)).not.toHaveProperty(
+    'data',
+  );
+}, 20000);
 it('metadata-only result title correction must not silently rewrite a large integer in stored evidence', async () => {
   const f = await fixture();
   const originalRaw = `{"exercise_id":"${f.ex.id}","title":"Original result","kind":"result","data":{"counter":9007199254740993}}`;
@@ -371,12 +429,15 @@ for (const mode of ['create', 'edit'] as const)
     it(`rejects duplicate result keys before any ${mode} write: ${data}`, async () => {
       const f = await fixture();
       const user = userEvent.setup();
-      const original = mode === 'edit'
-        ? await req(f.ep, 'POST', {
-            exercise_id: f.ex.id, title: 'Existing result', kind: 'result',
-            data: { n: 42, source: '9007199254740993' },
-          })
-        : undefined;
+      const original =
+        mode === 'edit'
+          ? await req(f.ep, 'POST', {
+              exercise_id: f.ex.id,
+              title: 'Existing result',
+              kind: 'result',
+              data: { n: 42, source: '9007199254740993' },
+            })
+          : undefined;
       const before = original
         ? await (await fetch('/api/v1' + f.ep + '/' + original.id)).text()
         : undefined;
@@ -388,10 +449,14 @@ for (const mode of ['create', 'edit'] as const)
           : `{"exercise_id":"${f.ex.id}","title":"Raw duplicate","kind":"result","data":${data}}`,
       });
       expect(direct.status).toBe(422);
-      render(<EvidenceList labId={f.lab.id} teamId={f.team.id} exerciseId={f.ex.id} submissions={[]} />);
-      await user.click(await screen.findByRole('button', {
-        name: mode === 'create' ? 'Νέο τεκμήριο' : 'Επεξεργασία τεκμηρίου',
-      }));
+      render(
+        <EvidenceList labId={f.lab.id} teamId={f.team.id} exerciseId={f.ex.id} submissions={[]} />,
+      );
+      await user.click(
+        await screen.findByRole('button', {
+          name: mode === 'create' ? 'Νέο τεκμήριο' : 'Επεξεργασία τεκμηρίου',
+        }),
+      );
       if (mode === 'create') {
         await user.type(screen.getByLabelText('Τίτλος τεκμηρίου'), 'Duplicate draft');
         await user.selectOptions(screen.getByLabelText('Είδος τεκμηρίου'), 'result');
@@ -400,22 +465,35 @@ for (const mode of ['create', 'edit'] as const)
       await user.clear(input);
       await user.type(input, data.replaceAll('{', '{{').replaceAll('[', '[['));
       const start = calls.length;
-      await user.click(screen.getByRole('button', {
-        name: mode === 'create' ? 'Αποθήκευση τεκμηρίου' : 'Αποθήκευση',
-      }));
+      await user.click(
+        screen.getByRole('button', {
+          name: mode === 'create' ? 'Αποθήκευση τεκμηρίου' : 'Αποθήκευση',
+        }),
+      );
       // Wait for either outcome so RED reports the integrity failure, not a timeout.
-      await waitFor(() => expect(
-        screen.queryByRole('alert') || screen.queryByText(mode === 'create'
-          ? 'Το τεκμήριο αποθηκεύτηκε και επιβεβαιώθηκε.'
-          : 'Αποθηκεύτηκε και επιβεβαιώθηκε.'),
-      ).toBeTruthy());
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('alert') ||
+            screen.queryByText(
+              mode === 'create'
+                ? 'Το τεκμήριο αποθηκεύτηκε και επιβεβαιώθηκε.'
+                : 'Αποθηκεύτηκε και επιβεβαιώθηκε.',
+            ),
+        ).toBeTruthy(),
+      );
       const writes = calls.slice(start).filter((c) => ['POST', 'PATCH'].includes(c.method));
       const persisted = (await req(f.ep)).items;
       const after = original
         ? await (await fetch('/api/v1' + f.ep + '/' + original.id)).text()
         : undefined;
-      observations.push({ case: 'duplicate result ' + mode, input: data,
-        directHTTPStatus: direct.status, writes, before, after });
+      observations.push({
+        case: 'duplicate result ' + mode,
+        input: data,
+        directHTTPStatus: direct.status,
+        writes,
+        before,
+        after,
+      });
       expect(writes).toHaveLength(0);
       expect(screen.getByRole('alert')).toHaveTextContent(/διπλά κλειδιά/);
       expect(input).toHaveValue(data);

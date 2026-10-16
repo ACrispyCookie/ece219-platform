@@ -100,8 +100,12 @@ it.each(['cancel', 'close', 'escape', 'backdrop'])(
     }
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(calls.filter((c) => c.method === 'DELETE')).toEqual([]);
-    expect(trigger()).toBeEnabled();
-    expect(trigger()).toHaveFocus();
+    // Dialog removal is a commit boundary; trigger focus is restored by the
+    // subsequent passive effect after the enclosing fieldset is unlocked.
+    await waitFor(() => {
+      expect(trigger()).toBeEnabled();
+      expect(trigger()).toHaveFocus();
+    });
     expect(removed).not.toHaveBeenCalled();
     await open();
     expect(calls).toHaveLength(2);

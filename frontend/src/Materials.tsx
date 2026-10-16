@@ -1,10 +1,19 @@
-import { useContext, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { api, id, json, labPath } from './api';
 import { FileMetadata, findSaved, uploadFile } from './files';
 import Removal from './Removal';
 import Uploads from './Uploads';
 import { OperationContext, useOperations } from './OperationContext';
-import { DirtyContext, Empty, Field, LoadState, More, useDirty, usePaged } from './ui';
+import {
+  DirtyContext,
+  Empty,
+  Field,
+  LoadState,
+  More,
+  useDirty,
+  useEditRequest,
+  usePaged,
+} from './ui';
 import type { Exercise, Material, StoredFile } from './types';
 import { MaterialCorrection } from './CatalogCorrections';
 const roles: Record<string, string> = {
@@ -138,7 +147,8 @@ function MaterialForm({
             />
           </Field>
           <p className="small muted">
-            Όλα τα αρχεία προσφέρονται μόνο για λήψη. Αρχεία αξιολογητών δεν εκτελούνται.
+            Προεπισκόπηση υποστηριζόμενων αρχείων ή λήψη του πρωτοτύπου. Αρχεία αξιολογητών δεν
+            εκτελούνται.
           </p>
           {fileInfo && (
             <p className="small muted">
@@ -168,17 +178,32 @@ export default function Materials({ labId }: { labId: string }) {
   const operations = useOperations();
   const path = `${labPath(labId)}/materials`;
   const list = usePaged<Material>(path);
+  const exercises = usePaged<Exercise>(`${labPath(labId)}/exercises`);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Material>();
   const [editVersion, setEditVersion] = useState(0);
-  const [loadingEdit, setLoadingEdit] = useState<string>();
+  const editRequest = useEditRequest(path, operations);
+  const loadingEdit = editRequest.loading;
   const [error, setError] = useState('');
+  const [editErrorId, setEditErrorId] = useState<string>();
   const [success, setSuccess] = useState('');
   const [uploadsVersion, setUploadsVersion] = useState(0);
   const context = useContext(DirtyContext);
+  useEffect(() => {
+    setEditing(undefined);
+    setOpen(false);
+    setError('');
+    setSuccess('');
+  }, [path]);
   return (
     <OperationContext.Provider value={operations}>
-      <fieldset disabled={operations.pending} className="form-fields">
+      <fieldset
+        disabled={operations.pending || !!loadingEdit}
+        className="form-fields"
+        onChangeCapture={(e) => {
+          if (editRequest.pending.current) e.stopPropagation();
+        }}
+      >
         <div className="section-heading">
           <div>
             <h2>Υλικό εργαστηρίου</h2>
@@ -186,8 +211,9 @@ export default function Materials({ labId }: { labId: string }) {
           </div>
           <button
             className="primary"
+            disabled={!!loadingEdit}
             onClick={() => {
-              if (context.guard()) {
+              if (!editRequest.blocked() && context.guard()) {
                 setEditing(undefined);
                 setOpen(true);
                 setSuccess('');
@@ -207,75 +233,91 @@ export default function Materials({ labId }: { labId: string }) {
               setUploadsVersion((v) => v + 1);
             }}
             onCancel={() => {
-              if (context.guard()) setOpen(false);
+              if (!editRequest.blocked() && context.guard()) setOpen(false);
             }}
           />
         )}
-        {editing && (
-          <MaterialCorrection
-            key={`${editing.id}-${editVersion}`}
-            labId={labId}
-            initial={editing}
-            onSaved={(saved) => {
-              setEditing((current) => (current?.id === saved.id ? saved : current));
-              list.reload();
-              setUploadsVersion((v) => v + 1);
-            }}
-            onCancel={() => {
-              if (context.guard()) setEditing(undefined);
-            }}
-          />
-        )}
+
         {success && (
           <p role="status" className="success">
             {success}
           </p>
         )}
-        {error && (
+        {list.value && list.error && (
           <p className="notice error" role="alert">
-            {error}
+            {list.error.message}{' '}
+            <button type="button" onClick={list.reload}>
+              Επανάληψη ανανέωσης
+            </button>
           </p>
         )}
-        <LoadState {...list} retry={list.reload}>
+        <LoadState
+          {...list}
+          error={list.value ? undefined : list.error}
+          loading={list.loading && !list.value}
+          retry={list.reload}
+        >
           {!list.items.length ? (
             <Empty>Δεν έχει προστεθεί υλικό.</Empty>
           ) : (
             <div className="cards">
               {list.items.map((m) => (
-                <article className="resource-card" key={m.id}>
+                <article
+                  className={editing?.id === m.id ? 'resource-card editing' : 'resource-card'}
+                  key={m.id}
+                >
                   <div className="section-heading">
                     <h3>{m.title}</h3>
                     <span className="badge">{roles[m.role] || m.role}</span>
                   </div>
                   <p className="muted preserve">{m.description}</p>
                   <p className="small muted">
-                    {m.exercise_id ? `Άσκηση: ${m.exercise_id}` : 'Όλο το εργαστήριο'}
+                    {m.exercise_id
+                      ? `Άσκηση: ${exercises.items.find((x) => x.id === m.exercise_id)?.title || m.exercise_id.slice(0, 8)}`
+                      : 'Όλο το εργαστήριο'}
                   </p>
                   <FileMetadata fileId={m.file_id} />
+                  <details className="technical-metadata">
+                    <summary>Μεταδεδομένα υλικού</summary>
+                    <dl>
+                      <dt>ID</dt>
+                      <dd className="mono">{m.id}</dd>
+                      <dt>Έκδοση</dt>
+                      <dd>{m.revision}</dd>
+                      {m.exercise_id && (
+                        <>
+                          <dt>Άσκηση</dt>
+                          <dd className="mono">{m.exercise_id}</dd>
+                        </>
+                      )}
+                    </dl>
+                  </details>
                   <div className="actions item-actions">
                     <button
                       disabled={!!loadingEdit}
                       onClick={async () => {
-                        if (!context.guard()) return;
-                        setLoadingEdit(m.id);
+                        if (editRequest.blocked() || !context.guard()) return;
+                        const currentRequest = editRequest.checkpoint();
                         setError('');
+                        setEditErrorId(m.id);
                         setSuccess('');
-                        try {
-                          const current = await api<Material>(`${path}/${id(m.id)}`);
-                          if (
-                            current.id !== m.id ||
-                            current.lab_id !== labId ||
-                            current.revision < 1
-                          )
-                            throw new Error('Δεν επιβεβαιώθηκε το υλικό διακομιστή.');
-                          setOpen(false);
-                          setEditing(current);
-                          setEditVersion((v) => v + 1);
-                        } catch (e) {
-                          setError((e as Error).message);
-                        } finally {
-                          setLoadingEdit(undefined);
-                        }
+                        await editRequest.run(
+                          m.id,
+                          async () => {
+                            const current = await api<Material>(`${path}/${id(m.id)}`);
+                            if (!currentRequest()) return;
+                            if (
+                              current.id !== m.id ||
+                              current.lab_id !== labId ||
+                              current.revision < 1
+                            )
+                              throw new Error('Δεν επιβεβαιώθηκε το υλικό διακομιστή.');
+                            setOpen(false);
+                            setEditing(current);
+                            setEditVersion((v) => v + 1);
+                          },
+                          (e) => setError(e.message),
+                        );
                       }}
                     >
                       {loadingEdit === m.id ? 'Φόρτωση…' : 'Επεξεργασία υλικού'}
@@ -293,6 +335,26 @@ export default function Materials({ labId }: { labId: string }) {
                       }}
                     />
                   </div>
+                  {error && editErrorId === m.id && (
+                    <p className="notice error" role="alert">
+                      {error}
+                    </p>
+                  )}
+                  {editing?.id === m.id && (
+                    <MaterialCorrection
+                      key={`${editing.id}-${editVersion}`}
+                      labId={labId}
+                      initial={editing}
+                      onSaved={(saved) => {
+                        setEditing((current) => (current?.id === saved.id ? saved : current));
+                        list.reload();
+                        setUploadsVersion((v) => v + 1);
+                      }}
+                      onCancel={() => {
+                        if (!editRequest.blocked() && context.guard()) setEditing(undefined);
+                      }}
+                    />
+                  )}
                 </article>
               ))}
             </div>

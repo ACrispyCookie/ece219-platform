@@ -477,7 +477,7 @@ def create_app(data_dir, allowed_hosts, frontend_dir=None):
         public = reject_symlinks(frontend_dir)
         if not public.is_dir() or catalog.db.root == public or catalog.db.root in public.parents or public in catalog.db.root.parents:
             raise ValueError('frontend_dir must be an existing directory separate from private state')
-        extensions = {'.html', '.js', '.css', '.svg', '.png', '.jpg', '.jpeg', '.ico', '.webp', '.woff', '.woff2', '.map', '.json'}
+        extensions = {'.html', '.js', '.mjs', '.css', '.svg', '.png', '.jpg', '.jpeg', '.ico', '.webp', '.woff', '.woff2', '.map', '.json'}
         whitelist = {}
         for directory, dirs, filenames in os.walk(public, followlinks=False):
             dirs[:] = [d for d in dirs if not (Path(directory) / d).is_symlink()]

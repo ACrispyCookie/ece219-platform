@@ -316,7 +316,7 @@ it.each(['material', 'evidence', 'submission', 'file'] as const)(
     expect(button.closest('.item-actions')).not.toBeNull();
     expect(button).toHaveClass('compact-delete');
     if (kind === 'submission') {
-      fireEvent.click(screen.getByRole('button', { name: 'Επιλογή παράδοσης s' }));
+      fireEvent.click(screen.getByRole('button', { name: /Προβολή αρχείων/ }));
       await screen.findByText('Περιεχόμενα επιλεγμένης παράδοσης');
     }
     fireEvent.click(button);

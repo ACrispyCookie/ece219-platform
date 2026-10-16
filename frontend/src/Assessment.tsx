@@ -1,7 +1,19 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { api, id, json, labPath } from './api';
 import { compareDecimal, sumDecimals } from './decimal';
-import { Empty, Field, LoadState, More, SaveForm, usePaged, useResource } from './ui';
+import {
+  Empty,
+  Field,
+  LoadState,
+  More,
+  SaveForm,
+  assessmentStatus,
+  greekDate,
+  sourceLabel,
+  submissionLabel,
+  usePaged,
+  useResource,
+} from './ui';
 import type { Assessment, Exercise, Submission } from './types';
 import EvidenceList from './Evidence';
 import Removal from './Removal';
@@ -50,11 +62,11 @@ function History({ path }: { path: string }) {
               <li key={`${a.revision}-${index}`}>
                 <div className="actions">
                   <strong>Έκδοση {a.revision}</strong>
-                  <span className="badge">{a.status}</span>
+                  <span className="badge">{assessmentStatus(a.status)}</span>
                   <span>{a.score ?? '—'} μονάδες</span>
                 </div>
                 <p className="small muted">
-                  {a.updated_at || a.created_at || 'Χωρίς χρονική σήμανση'} · {a.source} · Κλίμακα{' '}
+                  {greekDate(a.updated_at || a.created_at)} · {sourceLabel(a.source)} · Κλίμακα{' '}
                   {a.rubric_revision}
                 </p>
                 <p className="preserve">{a.notes}</p>
@@ -80,6 +92,7 @@ function AssessmentEditor({
   onSaved,
   exercisePath,
   onExerciseReload,
+  headerActions,
 }: {
   path: string;
   initial: Assessment;
@@ -88,6 +101,7 @@ function AssessmentEditor({
   onSaved: (saved: Assessment) => void;
   exercisePath: string;
   onExerciseReload: (exercise: Exercise) => void;
+  headerActions?: ReactNode;
 }) {
   const [confirmed, setConfirmed] = useState(false);
   const [serverExercise, setServerExercise] = useState<Exercise>();
@@ -99,6 +113,7 @@ function AssessmentEditor({
   return (
     <SaveForm
       title="Αξιολόγηση άσκησης"
+      headerActions={headerActions}
       initial={initial}
       validate={(d) => {
         if (initial.rubric_stale && !confirmed) {
@@ -235,7 +250,7 @@ function AssessmentEditor({
                   )}
                   {submissions.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.filename} · {s.id} · {s.created_at}
+                      {submissionLabel(s)}
                     </option>
                   ))}
                 </select>
@@ -246,7 +261,7 @@ function AssessmentEditor({
                   onChange={(e) => set({ status: e.target.value as Assessment['status'] })}
                 >
                   <option value="ungraded">Χωρίς βαθμό</option>
-                  <option value="draft">Πρόχειρη</option>
+                  <option value="draft">Προσχέδιο</option>
                   <option value="final">Οριστική</option>
                 </select>
               </Field>
@@ -336,27 +351,28 @@ export default function AssessmentView({
           </div>
           {exercise.archived && <p className="notice warn">Αρχειοθετημένη άσκηση</p>}
         </section>
-        {assessment.value?.id != null && (
-          <div className="actions item-actions assessment-actions">
-            <Removal
-              path={path}
-              revision={assessment.value.revision}
-              title={exercise.title}
-              kind="αξιολόγησης"
-              onRemoved={(empty) => {
-                assessment.setValue(empty);
-                setHistoryVersion((v) => v + 1);
-                setEditorVersion((v) => v + 1);
-              }}
-            />
-          </div>
-        )}
+
         <LoadState {...assessment} retry={assessment.reload}>
           {assessment.value && (
             <AssessmentEditor
               key={editorVersion}
               path={path}
               initial={assessment.value}
+              headerActions={
+                assessment.value.id != null && (
+                  <Removal
+                    path={path}
+                    revision={assessment.value.revision}
+                    title={exercise.title}
+                    kind="αξιολόγησης"
+                    onRemoved={(empty) => {
+                      assessment.setValue(empty);
+                      setHistoryVersion((v) => v + 1);
+                      setEditorVersion((v) => v + 1);
+                    }}
+                  />
+                )
+              }
               exercise={exercise}
               submissions={submissions}
               exercisePath={`${labPath(labId)}/exercises/${id(exercise.id)}`}

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { api, id, json, labPath } from './api';
 import { FileMetadata, safeURL, uploadFile } from './files';
-import { Field, SaveForm, useDirty, usePaged } from './ui';
+import { Field, SaveForm, sourceLabel, submissionLabel, useDirty, usePaged } from './ui';
 import type { Evidence, Exercise, Material, StoredFile, Submission } from './types';
 import { sameRecord as same, unconfirmed } from './verification';
 import { parseResultJSON, stringifyJSON } from './resultJSON';
@@ -116,6 +116,7 @@ export function MaterialCorrection({
   return (
     <SaveForm
       title="Επεξεργασία υλικού"
+      focusOnMount
       initial={initial}
       validate={(d) => (!d.title.trim() ? 'Συμπληρώστε τίτλο υλικού.' : undefined)}
       save={async (d) => {
@@ -205,7 +206,7 @@ export function EvidenceCorrection({
   teamId: string;
   initial: Evidence;
   submissions: Submission[];
-  onSaved: () => void;
+  onSaved: (saved: Evidence) => void;
   onCancel: () => void;
 }) {
   const correction = useCorrection(
@@ -244,6 +245,7 @@ export function EvidenceCorrection({
   return (
     <SaveForm
       title="Επεξεργασία τεκμηρίου"
+      focusOnMount
       initial={draft}
       validate={validate}
       save={async (d) => {
@@ -256,7 +258,7 @@ export function EvidenceCorrection({
             kind: d.kind,
             title: d.title,
             ...(d.source !== initial.source ? { source: d.source } : {}),
-            ...(d.kind === 'text' ? { text: d.text } : {}),
+            ...(d.kind === 'text' || d.text !== initial.text ? { text: d.text } : {}),
             ...(d.kind === 'link' ? { url: d.url } : {}),
             ...(d.kind === 'result' && resultChanged(d)
               ? { data: parseResultJSON(d.resultJSON) }
@@ -267,10 +269,13 @@ export function EvidenceCorrection({
       }}
       read={async () => asDraft(await correction.read())}
       compareRead={async () => asDraft(await correction.compareRead())}
-      onReload={replacement.clear}
-      onSaved={() => {
+      onReload={(saved) => {
         replacement.clear();
-        onSaved();
+        onSaved(saved);
+      }}
+      onSaved={(saved) => {
+        replacement.clear();
+        onSaved(saved);
       }}
       onCancel={onCancel}
     >
@@ -304,7 +309,7 @@ export function EvidenceCorrection({
                 )}
                 {submissions.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.filename} · {s.id}
+                    {submissionLabel(s)}
                   </option>
                 ))}
               </select>
@@ -317,11 +322,9 @@ export function EvidenceCorrection({
               }}
             />
           </div>
-          {d.kind === 'text' && (
-            <Field label="Κείμενο τεκμηρίου">
-              <textarea value={d.text || ''} onChange={(e) => set({ text: e.target.value })} />
-            </Field>
-          )}
+          <Field label="Κείμενο τεκμηρίου">
+            <textarea value={d.text || ''} onChange={(e) => set({ text: e.target.value })} />
+          </Field>
           {d.kind === 'link' && (
             <Field label="Σύνδεσμος">
               <input value={d.url || ''} onChange={(e) => set({ url: e.target.value })} />
@@ -355,10 +358,17 @@ export function EvidenceCorrection({
             </>
           )}
           <p className="small muted">
-            ID {d.id} · Έκδοση {d.revision} · Προέλευση {d.source}
+            Έκδοση {d.revision} · Προέλευση {sourceLabel(d.source)}
           </p>
           <Field label="Προέλευση τεκμηρίου">
-            <input value={d.source} onChange={(e) => set({ source: e.target.value })} />
+            <select value={d.source} onChange={(e) => set({ source: e.target.value })}>
+              {!['human', 'agent', 'import'].includes(d.source) && (
+                <option value={d.source}>{sourceLabel(d.source)}</option>
+              )}
+              <option value="human">Διδάσκων</option>
+              <option value="agent">Βοηθός AI</option>
+              <option value="import">Εισαγωγή</option>
+            </select>
           </Field>
         </>
       )}

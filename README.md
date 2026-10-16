@@ -40,18 +40,22 @@ The default listener is loopback. To bind to a trusted LAN interface, supply the
 make serve HOST=192.168.1.5 PORT=3457
 ```
 
-Host and browser Origin checks require the exact advertised address and port. Authentication is still required on the LAN. Use a VPN or an HTTPS deployment when traffic crosses an untrusted network; the CLI does not terminate TLS or trust forwarded proxy headers.
+Host and browser Origin checks require the exact advertised address and port. Authentication is still required on the LAN. Use a VPN or an HTTPS deployment when traffic crosses an untrusted network; the CLI does not terminate TLS and ignores forwarded proxy headers unless an explicit reverse-proxy IP is trusted. See [reverse-proxy access](docs/operations.md#reverse-proxy-access) for the ECE219 domains.
 
 ## Using the application
 
 1. Create a lab and upload its teaching materials.
 2. Add exercises, assign maximum points and define their grading instructions. Criterion-based rubrics must sum exactly to the exercise maximum.
 3. Create teams and enter known members. Keep incomplete memberships explicitly incomplete.
-4. Upload the team's ZIP submissions. Choose a particular version explicitly when inspecting or associating a grade with it.
+4. Upload the team's ZIP submissions. Open a particular version to inspect its files; use the same control again to hide them. Viewing contents does not automatically associate that version with an assessment.
 5. Open an exercise tab for the team. Save a draft or final assessment, notes and evidence. A blank grade is not a zero.
 6. Use the overview to inspect completion and outstanding work, or export the lab's metadata and assessment history as JSON.
 
 Assessment and configuration changes require the current revision. Conflicts preserve the editor's draft rather than overwriting another client's changes.
+
+Supported files can be previewed in the browser while retaining a separate download action. PDFs are rendered by the application viewer, source/text files are displayed without execution, and supported raster images are shown as images. Unsupported or oversized files retain a download fallback. Uploaded HTML, SVG and scripts are never opened as active same-origin documents. The original file and archive-member bytes remain unchanged.
+
+Evidence and material corrections open beside the item being edited. Technical identifiers and raw result JSON remain available in expandable details rather than dominating the default view. Assessment deletion is grouped with the assessment itself, separate from the exercise's grading instructions.
 
 Compact Delete controls are available for labs, exercises, teams, materials, submissions, assessments, evidence and uploads. The confirmation names the target and shows the related records that will be removed; deleting a higher-level entity removes its contained catalog records in one transaction, including relevant assessment history. Archive remains a non-destructive alternative. Stored blob bytes and separate backups are retained—catalog deletion is not secure erasure. See [deletion scope and confirmation](docs/api.md#preview-confirm-and-delete).
 

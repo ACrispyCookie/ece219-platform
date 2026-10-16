@@ -155,6 +155,20 @@ it('renders dynamic overview with unknown grades, literal student IDs and attent
   await user.click(screen.getByLabelText('Χρειάζονται προσοχή'));
   expect(screen.getByRole('button', { name: 'Ομάδα δοκιμής' })).toBeVisible();
 });
+it('uses the same Greek draft label in the overview and assessment editor', async () => {
+  const overview = overrides[`GET /api/v1/labs/${lab.id}/overview`] as any;
+  vi.stubGlobal(
+    'fetch',
+    mockAPI({
+      [`GET /api/v1/labs/${lab.id}/overview`]: {
+        ...overview,
+        rows: [{ ...overview.rows[0], assessments: [{ ...emptyAssessment, status: 'draft' }] }],
+      },
+    }),
+  );
+  render(<App />);
+  expect(await screen.findByText('Προσχέδιο')).toBeVisible();
+});
 it('shows a retryable server error rather than invented overview data', async () => {
   vi.stubGlobal(
     'fetch',
@@ -438,13 +452,12 @@ it('lists separate ZIP versions and requires explicit inventory selection with i
   render(<App />);
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: team.label }));
-  expect(
-    await screen.findByRole('button', { name: 'Επιλογή παράδοσης synthetic-s1' }),
-  ).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Επιλογή παράδοσης synthetic-s2' })).toBeVisible();
+  expect((await screen.findAllByRole('button', { name: /Προβολή αρχείων/ }))[0]).toBeVisible();
+  expect(screen.getAllByRole('button', { name: /Προβολή αρχείων/ })[1]).toBeVisible();
   expect(screen.queryByText('synthetic/student.asm')).toBeNull();
-  await user.click(screen.getByRole('button', { name: 'Επιλογή παράδοσης synthetic-s2' }));
-  const link = await screen.findByRole('link', { name: 'synthetic/student.asm' });
+  await user.click(screen.getAllByRole('button', { name: /Προβολή αρχείων/ })[1]);
+  const member = (await screen.findByText('synthetic/student.asm')).closest('li')!;
+  const link = within(member).getByRole('link', { name: 'Λήψη' });
   expect(link).toHaveAttribute('download');
   expect(link.getAttribute('href')).toContain('path=synthetic%2Fstudent.asm');
 });
@@ -542,7 +555,11 @@ it('uploads a file then creates evidence and shows actual read-back metadata wit
     new File(['synthetic'], 'local-name.txt', { type: 'text/plain' }),
   );
   await user.click(screen.getByRole('button', { name: 'Αποθήκευση τεκμηρίου' }));
-  expect(await screen.findByRole('link', { name: 'server-evidence.txt' })).toBeVisible();
+  expect(
+    within(
+      (await screen.findByText('server-evidence.txt')).closest('.file-metadata') as HTMLElement,
+    ).getByRole('link', { name: 'Λήψη' }),
+  ).toBeVisible();
   expect(saved.file_id).toBe(f.id);
   expect(saved.exercise_id).toBe(exercise.id);
   expect(saved.submission_id).toBeNull();
@@ -588,9 +605,11 @@ it('uploads exercise-associated materials as inert files and confirms saved meta
     new File(['synthetic'], 'local.html', { type: 'text/html' }),
   );
   await user.click(screen.getByRole('button', { name: 'Αποθήκευση υλικού' }));
-  expect(await screen.findByRole('link', { name: 'server-handout.html' })).toHaveAttribute(
-    'download',
-  );
+  expect(
+    within(
+      (await screen.findByText('server-handout.html')).closest('.file-metadata') as HTMLElement,
+    ).getByRole('link', { name: 'Λήψη' }),
+  ).toHaveAttribute('download');
   expect(saved.role).toBe('handout');
   expect(saved.exercise_id).toBe(exercise.id);
   expect(screen.queryByRole('button', { name: /Εκτέλεση/ })).toBeNull();
@@ -872,7 +891,7 @@ it('renders archive directories and blocked members without unsafe download link
   render(<App />);
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: team.label }));
-  await user.click(await screen.findByRole('button', { name: `Επιλογή παράδοσης ${s.id}` }));
+  await user.click(await screen.findByRole('button', { name: /Προβολή αρχείων/ }));
   expect(await screen.findByText('synthetic-folder/')).toBeVisible();
   expect(screen.queryByRole('link', { name: 'synthetic-folder/' })).toBeNull();
   expect(screen.queryByRole('link', { name: 'synthetic-bad.asm' })).toBeNull();
@@ -1203,7 +1222,9 @@ it('reuploads the same ZIP as distinct confirmed versions without remounting the
   await user.upload(input, file);
   expect(screen.getByRole('button', { name: 'Μεταφόρτωση ZIP' })).toBeEnabled();
   await user.click(screen.getByRole('button', { name: 'Μεταφόρτωση ZIP' }));
-  await screen.findByRole('button', { name: 'Επιλογή παράδοσης synthetic-repeat-2' });
+  await waitFor(() =>
+    expect(screen.getAllByRole('button', { name: /Προβολή αρχείων/ })).toHaveLength(2),
+  );
   expect(versions.map((v) => v.id)).toEqual(['synthetic-repeat-1', 'synthetic-repeat-2']);
   expect(confirmed).toEqual(['synthetic-repeat-1', 'synthetic-repeat-2']);
   expect(
